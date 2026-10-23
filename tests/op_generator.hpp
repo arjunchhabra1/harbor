@@ -4,17 +4,11 @@
 #include <cstdint>
 #include <random>
 #include <vector>
-#include "harbor/types.hpp"
+#include "harbor/command.hpp"
 
 namespace harbor::testing {
 
-struct Op {
-    enum class Kind { Add, Cancel, Replace } kind;
-    NewOrder order;  // Add
-    OrderId id;      // Cancel / Replace
-    Price price;     // Replace
-    Quantity qty;    // Replace
-};
+using Op = harbor::Command;
 
 // Seeded stream of book operations: 60% add (20% of them IOC), 30% cancel,
 // 10% replace. Prices cluster around `mid` with the sides overlapping, and a small
