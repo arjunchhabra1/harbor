@@ -54,6 +54,7 @@ add_executable(harbor_tests
     tests/test_snapshot.cpp
     tests/test_engine.cpp
     tests/test_recovery.cpp
+    tests/test_crash.cpp
 )
 target_link_libraries(harbor_tests PRIVATE harbor GTest::gtest_main)
 harbor_configure_target(harbor_tests)
@@ -62,10 +63,20 @@ include(GoogleTest)
 gtest_discover_tests(harbor_tests)
 
 # Benchmarks: build with -DCMAKE_BUILD_TYPE=Release for meaningful numbers.
-add_executable(harbor_bench bench/bench_books.cpp)
+add_executable(harbor_bench bench/bench_books.cpp bench/alloc_counter.cpp)
 target_include_directories(harbor_bench PRIVATE tests)
 target_link_libraries(harbor_bench PRIVATE harbor)
 harbor_configure_target(harbor_bench)
-foreach(target harbor harbor_bench)
+add_executable(harbor_bench_engine bench/bench_engine.cpp bench/alloc_counter.cpp)
+target_include_directories(harbor_bench_engine PRIVATE tests)
+target_link_libraries(harbor_bench_engine PRIVATE harbor)
+harbor_configure_target(harbor_bench_engine)
+# Crash campaign: ./harbor_crash_matrix [trials] [seed]
+add_executable(harbor_crash_matrix tools/crash_matrix.cpp)
+target_include_directories(harbor_crash_matrix PRIVATE tests)
+target_link_libraries(harbor_crash_matrix PRIVATE harbor)
+harbor_configure_target(harbor_crash_matrix)
+
+foreach(target harbor harbor_bench harbor_bench_engine harbor_crash_matrix)
     target_compile_options(${target} PRIVATE $<$<CONFIG:Release>:-O2 -march=native>)
 endforeach()

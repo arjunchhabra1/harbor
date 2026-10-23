@@ -38,6 +38,9 @@ Apple M3, Apple clang 16, `-O2 -march=native`, 10M generated operations
 - A seeded differential test drives both books with 1M+ operations and requires
   identical fills, rejects, and depth after each one, including at the edges of
   the price range.
+- Crash recovery: 10,000 `SIGKILL`s at random points, with zero lost
+  acknowledgements and zero state mismatches after recovery; truncating the
+  log at any byte recovers, and a damaged record mid-log refuses to start.
 - Everything runs under ASan and UBSan in CI (GCC and Clang).
 
 ## Build
