@@ -35,6 +35,8 @@ add_library(harbor STATIC
     src/fast_book.cpp
     src/crc32c.cpp
     src/command.cpp
+    src/file_io.cpp
+    src/wal.cpp
 )
 target_include_directories(harbor PUBLIC include)
 harbor_configure_target(harbor)
@@ -47,6 +49,7 @@ add_executable(harbor_tests
     tests/test_differential.cpp
     tests/test_crc32c.cpp
     tests/test_command_codec.cpp
+    tests/test_wal.cpp
 )
 target_link_libraries(harbor_tests PRIVATE harbor GTest::gtest_main)
 harbor_configure_target(harbor_tests)
