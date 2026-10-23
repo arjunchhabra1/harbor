@@ -58,3 +58,43 @@ figure: 26.9M ops/s is about 37 ns per operation on average. On Linux x86-64,
 FastBook's zero-allocation result is measured, not assumed: the benchmark
 replaces global `operator new` with a counting version and reports every heap
 allocation made during each timed run.
+
+# Engine durability (v2)
+
+Produced by `bench/bench_engine.cpp` on the same machine (Apple M3, macOS 14.5,
+Apple clang 16, `-O2 -march=native`), measured on top of `7259f7c`, median of
+three runs. Commands come from the same generator (seed 42) against a book of up
+to 65,536 orders; the caller drains outputs after every submit.
+
+## Throughput by batch size and sync mode
+
+| Sync mode | Batch 1 | Batch 64 | Batch 1,024 |
+|---|---|---|---|
+| None (no sync call) | 771K ops/s | 8.1M ops/s | 12.0M ops/s |
+| Fsync (`fsync`) | 62K ops/s | 0.93M ops/s | 8.0M ops/s |
+| Full (`F_FULLFSYNC`) | 361 ops/s | 21K ops/s | 275K ops/s |
+
+Every cell made zero heap allocations after warm-up.
+
+`F_FULLFSYNC` is the only mode that forces the SSD to flush its own cache, so
+it is the only one durable against power loss on macOS, and it costs about
+3 ms per call. Group commit is what makes it usable: batching 1,024 commands
+per sync is about 760x faster than syncing each one.
+
+## Commit latency (64 records per commit)
+
+| Sync mode | p50 | p99 |
+|---|---|---|
+| None | 5.7 µs | 11.5 µs |
+| Fsync | 33 µs | 62 µs |
+| Full | 2.96 ms | 4.5 ms |
+
+## Recovery time
+
+| Directory | Recovery time |
+|---|---|
+| 1M-command log, no snapshot | 190 ms (range 177 to 205) |
+| Snapshot of 65,533 orders + ~10K-command log | 12 ms |
+
+Snapshots cut recovery time by about 15x here, and recovery without one grows
+linearly with the log.

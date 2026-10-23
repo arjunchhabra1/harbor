@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
@@ -54,7 +55,8 @@ public:
             throw std::invalid_argument("EngineOptions: maxBatch must be positive");
         }
         outputs_.reserve(opts_.maxBatch);
-        fills_.reserve(std::size_t{opts_.maxBatch} * 4);
+        // Room for typical sweeps even at tiny batch sizes, so steady state never grows it.
+        fills_.reserve(std::max<std::size_t>(std::size_t{opts_.maxBatch} * 4, 4096));
         scratch_.reserve(256);
         open();
     }
@@ -112,6 +114,9 @@ public:
     // Calls onOutput(const Output&) for each released output in seq order.
     template <class F>
     void drain(F&& onOutput) {
+        if (released_ == 0) {
+            return;  // callers drain after every submit; keep that O(1)
+        }
         for (std::size_t i = 0; i < released_; ++i) {
             const PendingOutput& p = outputs_[i];
             onOutput(Output{p.seq, p.result, std::span<const Fill>(fills_.data() + p.fillBegin, p.fillCount)});

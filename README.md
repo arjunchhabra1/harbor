@@ -8,7 +8,7 @@ A low-latency exchange matching engine in C++20.
 | Version | Scope | Status |
 |---|---|---|
 | v1 | Price-time order book: limit, IOC, cancel, replace | Done |
-| v2 | Write-ahead log, snapshots, crash recovery | In progress |
+| v2 | Write-ahead log, snapshots, crash recovery | In review |
 | v3 | TCP order gateway, UDP market data | Planned |
 | v4 | Hot standby with failover | Planned |
 
@@ -30,6 +30,11 @@ Apple M3, Apple clang 16, `-O2 -march=native`, 10M generated operations
 |---|---|---|---|
 | FastBook | 26.9M ops/s | 37 | 0 |
 | ReferenceBook | 12.4M ops/s | 81 | 8.8M |
+
+Durability ([details](bench/RESULTS.md#engine-durability-v2)): with group commit
+of 1,024 commands, 8.0M ops/s with `fsync` and 275K ops/s with `F_FULLFSYNC`
+(full SSD flush; about 760x faster than syncing each command). Recovering 65K
+orders from a snapshot takes 12 ms.
 
 ## Testing
 
