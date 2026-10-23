@@ -18,13 +18,16 @@ struct Command {
 
 // Log record layout (little-endian):
 //   0 seq u64 | 8 kind u8 | 9 side u8 | 10 tif u8 | 11 reserved u8 | 12 client u32 |
-//   16 order id u64 | 24 price i64 | 32 qty u32 | 36 reserved u64 | 44 CRC32C of bytes 0-43
+//   16 order id u64 | 24 price i64 | 32 qty u32 | 36 batch first seq u64 |
+//   44 CRC32C of bytes 0-43
+// batchFirst is the seq of the first record in the same group commit; recovery
+// uses it to tell a torn final batch from damage to an acknowledged one.
 inline constexpr std::size_t kRecordSize = 48;
 
-void encodeRecord(std::uint64_t seq, const Command& cmd, std::uint8_t* out);
+void encodeRecord(std::uint64_t seq, std::uint64_t batchFirst, const Command& cmd, std::uint8_t* out);
 
 // Returns false if the CRC does not match or a field holds an invalid value.
-bool decodeRecord(const std::uint8_t* in, std::uint64_t& seq, Command& cmd);
+bool decodeRecord(const std::uint8_t* in, std::uint64_t& seq, std::uint64_t& batchFirst, Command& cmd);
 
 template <class Book>
 Reject applyCommand(Book& book, const Command& cmd, std::vector<Fill>& out) {

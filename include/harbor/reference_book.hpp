@@ -31,6 +31,23 @@ public:
     bool contains(OrderId id) const { return index_.contains(id); }
     bool checkInvariants(std::string& error) const;
 
+    // Visits resting orders: bids best price first, then asks best price
+    // first, each level in time priority.
+    // f(OrderId, ClientId, Side, Price, Quantity remaining)
+    template <class F>
+    void forEachResting(F&& f) const {
+        for (const auto& [price, queue] : bids_) {
+            for (const Resting& o : queue) {
+                f(o.id, o.client, Side::Buy, price, o.remaining);
+            }
+        }
+        for (const auto& [price, queue] : asks_) {
+            for (const Resting& o : queue) {
+                f(o.id, o.client, Side::Sell, price, o.remaining);
+            }
+        }
+    }
+
 private:
     struct Resting {
         OrderId id;

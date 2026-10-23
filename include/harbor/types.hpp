@@ -38,6 +38,8 @@ struct BookConfig {
     Price maxPrice;
     Price tick;
     std::uint32_t maxOrders;
+
+    bool operator==(const BookConfig&) const = default;
 };
 
 inline const char* toString(Reject r) {

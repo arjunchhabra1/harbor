@@ -23,7 +23,8 @@ protected:
         writeWalHeader(f, 3, 101);
         std::vector<std::uint8_t> buf(kRecordSize);
         for (int i = 0; i < n; ++i) {
-            encodeRecord(101 + static_cast<std::uint64_t>(i), cancelOf(static_cast<OrderId>(i)), buf.data());
+            std::uint64_t seq = 101 + static_cast<std::uint64_t>(i);
+            encodeRecord(seq, seq, cancelOf(static_cast<OrderId>(i)), buf.data());  // one record per batch
             f.writeAll(buf.data(), buf.size());
         }
         f.sync(SyncMode::None);
@@ -115,9 +116,9 @@ TEST_F(WalTest, SeqGapFails) {
         File f = File::create(file);
         writeWalHeader(f, 3, 101);
         std::vector<std::uint8_t> buf(kRecordSize);
-        encodeRecord(101, cancelOf(0), buf.data());
+        encodeRecord(101, 101, cancelOf(0), buf.data());
         f.writeAll(buf.data(), buf.size());
-        encodeRecord(103, cancelOf(2), buf.data());
+        encodeRecord(103, 103, cancelOf(2), buf.data());
         f.writeAll(buf.data(), buf.size());
     }
     EXPECT_THROW(scan(), std::runtime_error);
@@ -147,10 +148,61 @@ TEST_F(WalTest, AppendAfterTruncate) {
     {
         File f = File::openAppend(file);
         std::vector<std::uint8_t> buf(kRecordSize);
-        encodeRecord(104, cancelOf(3), buf.data());
+        encodeRecord(104, 104, cancelOf(3), buf.data());
         f.writeAll(buf.data(), buf.size());
     }
     s = scan();
     EXPECT_FALSE(s.tornTail);
     EXPECT_EQ(s.nextSeq, 105u);
+}
+
+namespace {
+
+// Batch A = seqs 101-110, batch B = seqs 111-130, as the engine writes them.
+void writeTwoBatches(const std::filesystem::path& file) {
+    File f = File::create(file);
+    writeWalHeader(f, 3, 101);
+    std::vector<std::uint8_t> buf(kRecordSize);
+    for (std::uint64_t seq = 101; seq <= 130; ++seq) {
+        encodeRecord(seq, seq <= 110 ? 101 : 111, cancelOf(seq - 101), buf.data());
+        f.writeAll(buf.data(), buf.size());
+    }
+}
+
+void zeroRecords(const std::filesystem::path& file, std::uint64_t firstSeq, std::uint64_t count) {
+    std::fstream s(file, std::ios::in | std::ios::out | std::ios::binary);
+    s.seekp(static_cast<std::streamoff>(kWalHeaderSize + (firstSeq - 101) * kRecordSize));
+    for (std::uint64_t i = 0; i < count * kRecordSize; ++i) {
+        s.put('\0');
+    }
+}
+
+}  // namespace
+
+// Power loss during the final batch's sync can persist later pages but not
+// earlier ones (they read back as zeros). Nothing in that batch was ever
+// acknowledged, so it is a torn tail, not corruption.
+TEST_F(WalTest, ZeroedRecordsInsideFinalBatchAreTorn) {
+    writeTwoBatches(file);
+    zeroRecords(file, 115, 3);
+    WalScan s = scan();
+    EXPECT_TRUE(s.tornTail);
+    EXPECT_EQ(s.nextSeq, 115u);
+    EXPECT_EQ(s.validBytes, recordOffset(14));
+}
+
+TEST_F(WalTest, ZeroedFirstRecordOfFinalBatchIsTorn) {
+    writeTwoBatches(file);
+    zeroRecords(file, 111, 1);
+    WalScan s = scan();
+    EXPECT_TRUE(s.tornTail);
+    EXPECT_EQ(s.nextSeq, 111u);
+}
+
+// Batch A was synced and acknowledged before batch B was written, so damage
+// inside it is real corruption.
+TEST_F(WalTest, DamageInEarlierBatchFails) {
+    writeTwoBatches(file);
+    zeroRecords(file, 110, 1);
+    EXPECT_THROW(scan(), std::runtime_error);
 }

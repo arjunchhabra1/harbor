@@ -2,45 +2,19 @@
 // Build in Release: cmake -S . -B build-rel -DCMAKE_BUILD_TYPE=Release
 
 #include <algorithm>
-#include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
-#include <new>
 #include <string>
 #include <vector>
 #include "harbor/command.hpp"
 #include "harbor/fast_book.hpp"
 #include "harbor/reference_book.hpp"
+#include "alloc_counter.hpp"
 #include "op_generator.hpp"
 
 using namespace harbor;
 using harbor::testing::Op;
-
-namespace {
-std::atomic<std::uint64_t> gAllocations{0};
-}  // namespace
-
-// Count every heap allocation in the process.
-void* operator new(std::size_t size) {
-    gAllocations.fetch_add(1, std::memory_order_relaxed);
-    if (void* p = std::malloc(size == 0 ? 1 : size)) {
-        return p;
-    }
-    throw std::bad_alloc();
-}
-void* operator new[](std::size_t size) { return operator new(size); }
-void* operator new(std::size_t size, const std::nothrow_t&) noexcept {
-    gAllocations.fetch_add(1, std::memory_order_relaxed);
-    return std::malloc(size == 0 ? 1 : size);
-}
-void* operator new[](std::size_t size, const std::nothrow_t& tag) noexcept {
-    return operator new(size, tag);
-}
-void operator delete(void* p) noexcept { std::free(p); }
-void operator delete[](void* p) noexcept { std::free(p); }
-void operator delete(void* p, std::size_t) noexcept { std::free(p); }
-void operator delete[](void* p, std::size_t) noexcept { std::free(p); }
 
 namespace {
 
@@ -80,13 +54,13 @@ void run(const char* name, const std::vector<Op>& ops) {
 
     {
         Book book{kCfg};
-        std::uint64_t before = gAllocations.load();
+        std::uint64_t before = harbor::bench::allocationCount();
         auto start = Clock::now();
         for (const Op& op : ops) {
             applyCommand(book, op, fills);
         }
         double seconds = std::chrono::duration<double>(Clock::now() - start).count();
-        std::uint64_t allocs = gAllocations.load() - before;
+        std::uint64_t allocs = harbor::bench::allocationCount() - before;
         std::printf("%-14s throughput   %14s ops/s   (%s ops, %s allocations)\n", name,
                     withCommas(static_cast<std::uint64_t>(ops.size() / seconds)).c_str(),
                     withCommas(ops.size()).c_str(), withCommas(allocs).c_str());
@@ -98,14 +72,14 @@ void run(const char* name, const std::vector<Op>& ops) {
             applyCommand(book, ops[i], fills);
         }
         std::vector<std::int64_t> samples(kLatencyOps);
-        std::uint64_t before = gAllocations.load();
+        std::uint64_t before = harbor::bench::allocationCount();
         for (std::size_t i = 0; i < kLatencyOps; ++i) {
             auto start = Clock::now();
             applyCommand(book, ops[kWarmupOps + i], fills);
             auto end = Clock::now();
             samples[i] = std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
         }
-        std::uint64_t allocs = gAllocations.load() - before;
+        std::uint64_t allocs = harbor::bench::allocationCount() - before;
         std::sort(samples.begin(), samples.end());
         auto pct = [&](double p) {
             return samples[static_cast<std::size_t>(p * static_cast<double>(samples.size() - 1))];

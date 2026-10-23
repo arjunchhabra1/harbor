@@ -56,11 +56,12 @@ WalScan scanWal(const std::filesystem::path& path,
     WalScan scan{getU64(h + 8), getU64(h + 16), getU64(h + 16), kWalHeaderSize, false};
     std::size_t slots = (data.size() - kWalHeaderSize) / kRecordSize;
     std::uint64_t seq = 0;
+    std::uint64_t batchFirst = 0;
     Command cmd{};
     std::size_t i = 0;
     for (; i < slots; ++i) {
         const std::uint8_t* rec = data.data() + kWalHeaderSize + i * kRecordSize;
-        if (!decodeRecord(rec, seq, cmd)) {
+        if (!decodeRecord(rec, seq, batchFirst, cmd)) {
             break;
         }
         if (seq != scan.nextSeq) {
@@ -70,12 +71,16 @@ WalScan scanWal(const std::filesystem::path& path,
         ++scan.nextSeq;
         scan.validBytes += kRecordSize;
     }
-    // Everything after the first bad record must also be bad: a torn group
-    // commit leaves garbage only at the end. A valid record after a bad one
-    // means the middle of the log was damaged.
+    // The engine syncs each batch before writing the next, so only the final
+    // batch can be torn, and power loss mid-sync can leave holes anywhere in
+    // it. A valid record after the first bad one is fine if it belongs to a
+    // batch that started at or before the bad position (the same, final
+    // batch). One from a later batch means an acknowledged batch was damaged.
     for (std::size_t j = i + 1; j < slots; ++j) {
-        if (decodeRecord(data.data() + kWalHeaderSize + j * kRecordSize, seq, cmd)) {
-            corrupt(path, "bad record " + std::to_string(i) + " followed by a valid one");
+        if (decodeRecord(data.data() + kWalHeaderSize + j * kRecordSize, seq, batchFirst, cmd) &&
+            batchFirst > scan.nextSeq) {
+            corrupt(path, "damaged record at seq " + std::to_string(scan.nextSeq) +
+                              " inside an acknowledged batch");
         }
     }
     scan.tornTail = data.size() != scan.validBytes;

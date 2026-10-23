@@ -107,6 +107,9 @@ void File::sync(SyncMode mode) {
     syncFd(fd_, mode, path_);
 }
 
+// Directories get a plain fsync in every syncing mode. In Full mode that is
+// still enough: every acknowledgement is preceded by an F_FULLFSYNC on the log,
+// which flushes the whole drive cache, including these directory updates.
 void syncDir(const std::filesystem::path& dir, SyncMode mode) {
     if (mode == SyncMode::None) {
         return;
