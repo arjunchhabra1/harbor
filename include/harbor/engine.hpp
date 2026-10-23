@@ -5,11 +5,13 @@
 #include <filesystem>
 #include <functional>
 #include <optional>
+#include <string>
 #include <span>
 #include <stdexcept>
 #include <vector>
 #include "harbor/command.hpp"
 #include "harbor/file_io.hpp"
+#include "harbor/snapshot.hpp"
 #include "harbor/types.hpp"
 #include "harbor/wal.hpp"
 
@@ -34,6 +36,10 @@ struct Output {
 // immediately, but its output is released only after the batch containing it
 // has been written and synced, so nothing is ever acknowledged that a crash
 // could undo. Single-threaded; the caller supplies the time.
+//
+// Constructing an Engine on a directory that already holds data recovers it:
+// the newest snapshot is restored and its log segment replayed. Destroying an
+// Engine does not commit: pending commands are dropped, exactly as in a crash.
 template <class Book>
 class Engine {
 public:
@@ -98,6 +104,9 @@ public:
         durableSeq_ = lastSeq_;
         pending_ = 0;
         released_ = outputs_.size();
+        if (durableSeq_ - snapshotSeq_ >= opts_.snapshotEvery) {
+            takeSnapshot();
+        }
     }
 
     // Calls onOutput(const Output&) for each released output in seq order.
@@ -140,21 +149,154 @@ private:
         }
     }
 
-    void open() {
-        std::filesystem::create_directories(opts_.dir);
-        for (const auto& entry : std::filesystem::directory_iterator(opts_.dir)) {
-            std::string name = entry.path().filename().string();
-            if (name.rfind("wal-", 0) == 0 || name.rfind("snap-", 0) == 0) {
-                throw std::runtime_error("recovery not implemented");
-            }
+    std::filesystem::path walPath(std::uint64_t segment) const { return opts_.dir / walName(segment); }
+    std::filesystem::path snapPath(std::uint64_t segment) const { return opts_.dir / snapName(segment); }
+
+    void hook(int step) {
+        if (opts_.afterSnapshotStep) {
+            opts_.afterSnapshotStep(step);
         }
-        segment_ = 0;
-        auto path = opts_.dir / walName(segment_);
-        File file = File::create(path);
-        writeWalHeader(file, segment_, 1);
+    }
+
+    // Creates a log segment holding only its header, durably.
+    File createSegment(std::uint64_t segment, std::uint64_t firstSeq) {
+        File file = File::create(walPath(segment));
+        writeWalHeader(file, segment, firstSeq);
         file.sync(opts_.sync);
         syncDir(opts_.dir, opts_.sync);
-        wal_.emplace(std::move(file));
+        return file;
+    }
+
+    // Segment N -> N+1. A crash between any two steps leaves a recoverable
+    // directory: the old snapshot and segment are deleted only after the new
+    // ones are durable.
+    void takeSnapshot() {
+        try {
+            std::uint64_t next = segment_ + 1;
+            auto tmp = opts_.dir / (snapName(next) + ".tmp");
+            writeSnapshotFile(tmp, captureSnapshot(book_, cfg_, next, durableSeq_), opts_.sync);
+            hook(1);
+            std::filesystem::rename(tmp, snapPath(next));
+            syncDir(opts_.dir, opts_.sync);
+            hook(2);
+            wal_.emplace(createSegment(next, durableSeq_ + 1));
+            std::uint64_t previous = segment_;
+            segment_ = next;
+            snapshotSeq_ = durableSeq_;
+            hook(3);
+            std::filesystem::remove(snapPath(previous));
+            std::filesystem::remove(walPath(previous));
+            syncDir(opts_.dir, opts_.sync);
+            hook(4);
+        } catch (...) {
+            broken_ = true;
+            throw;
+        }
+    }
+
+    static std::optional<std::uint64_t> segmentOf(const std::string& name, const std::string& prefix,
+                                                  const std::string& suffix) {
+        if (name.size() != prefix.size() + 12 + suffix.size() || name.rfind(prefix, 0) != 0 ||
+            name.compare(name.size() - suffix.size(), suffix.size(), suffix) != 0) {
+            return std::nullopt;
+        }
+        std::uint64_t n = 0;
+        for (char c : name.substr(prefix.size(), 12)) {
+            if (c < '0' || c > '9') {
+                return std::nullopt;
+            }
+            n = n * 10 + static_cast<std::uint64_t>(c - '0');
+        }
+        return n;
+    }
+
+    void open() {
+        std::filesystem::create_directories(opts_.dir);
+
+        // 1. Leftover temp files are snapshots that were never renamed into place.
+        std::optional<std::uint64_t> newestSnap;
+        std::vector<std::filesystem::path> stale;
+        std::vector<std::pair<std::uint64_t, std::filesystem::path>> segmentFiles;
+        for (const auto& entry : std::filesystem::directory_iterator(opts_.dir)) {
+            std::string name = entry.path().filename().string();
+            if (name.size() > 4 && name.compare(name.size() - 4, 4, ".tmp") == 0) {
+                stale.push_back(entry.path());
+            } else if (auto n = segmentOf(name, "snap-", ".bin")) {
+                newestSnap = std::max(newestSnap.value_or(0), *n);
+                segmentFiles.emplace_back(*n, entry.path());
+            } else if (auto w = segmentOf(name, "wal-", ".log")) {
+                segmentFiles.emplace_back(*w, entry.path());
+            }
+        }
+        for (const auto& path : stale) {
+            std::filesystem::remove(path);
+        }
+
+        // 2-3. Restore the newest snapshot, if any.
+        segment_ = newestSnap.value_or(0);
+        if (newestSnap) {
+            Snapshot snap = readSnapshotFile(snapPath(segment_));
+            if (snap.segment != segment_) {
+                throw std::runtime_error("corrupt snapshot " + snapPath(segment_).string() +
+                                         ": segment number does not match file name");
+            }
+            if (snap.cfg != cfg_) {
+                throw std::invalid_argument("BookConfig differs from the one stored in " +
+                                            snapPath(segment_).string());
+            }
+            restoreSnapshot(book_, snap);
+            snapshotSeq_ = snap.lastSeq;
+        }
+        lastSeq_ = durableSeq_ = snapshotSeq_;
+
+        // 4-6. Replay the segment, dropping a torn tail. A missing segment, or
+        // one whose header never finished writing, holds nothing that was ever
+        // acknowledged, so it is recreated.
+        auto log = walPath(segment_);
+        // Records are appended only after the header is synced, so a file no
+        // longer than a header with an invalid header is a torn creation. A
+        // bad header on a longer file is real corruption and scanWal throws.
+        bool usable = std::filesystem::exists(log);
+        if (usable && std::filesystem::file_size(log) <= kWalHeaderSize) {
+            try {
+                scanWal(log, [](std::uint64_t, const Command&) {});
+            } catch (const std::runtime_error&) {
+                usable = false;
+            }
+        }
+        if (!usable) {
+            std::filesystem::remove(log);
+            wal_.emplace(createSegment(segment_, snapshotSeq_ + 1));
+        } else {
+            WalScan scan = scanWal(log, [&](std::uint64_t, const Command& cmd) {
+                applyCommand(book_, cmd, scratch_);
+            });
+            if (scan.segment != segment_ || scan.firstSeq != snapshotSeq_ + 1) {
+                throw std::runtime_error("corrupt log " + log.string() +
+                                         ": header does not continue the snapshot");
+            }
+            if (scan.tornTail) {
+                truncateFile(log, scan.validBytes);
+            }
+            lastSeq_ = durableSeq_ = scan.nextSeq - 1;
+            wal_.emplace(File::openAppend(log));
+            if (scan.tornTail) {
+                wal_->sync(opts_.sync);
+            }
+        }
+        scratch_.clear();
+
+        // 7. Files from older segments are fully covered by the snapshot.
+        bool removed = false;
+        for (const auto& [n, path] : segmentFiles) {
+            if (n < segment_) {
+                std::filesystem::remove(path);
+                removed = true;
+            }
+        }
+        if (removed || !stale.empty()) {
+            syncDir(opts_.dir, opts_.sync);
+        }
     }
 
     BookConfig cfg_;
@@ -175,6 +317,7 @@ private:
 
     std::uint64_t lastSeq_ = 0;
     std::uint64_t durableSeq_ = 0;
+    std::uint64_t snapshotSeq_ = 0;  // last seq covered by the current segment's snapshot
     bool broken_ = false;
 };
 
