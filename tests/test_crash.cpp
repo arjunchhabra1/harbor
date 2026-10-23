@@ -80,3 +80,52 @@ TEST(TornWrite, FlippedByteMidLogFails) {
             << "record " << record;
     }
 }
+
+namespace {
+
+// 1,500 commands with maxBatch 1,024: batch A = seqs 1-1,024, batch B = 1,025-1,500.
+void writeTwoBatchLog(const std::filesystem::path& dir) {
+    EngineOptions o = harbor::testing::crashOptions(dir);
+    o.maxBatch = 1'024;
+    o.snapshotEvery = 1'000'000'000;
+    Engine<FastBook> engine(harbor::testing::kCrashCfg, o);
+    auto gen = harbor::testing::crashGenerator(13);
+    std::chrono::steady_clock::time_point now{};
+    for (int i = 0; i < 1'500; ++i) {
+        engine.submit(gen.next([&](OrderId id) { return engine.book().contains(id); }), now);
+        engine.drain([](const Output&) {});
+    }
+    engine.commit();
+}
+
+// What power loss during a sync can leave: a page-sized run of zeros.
+void zeroBytes(const std::filesystem::path& file, std::uintmax_t offset, std::uintmax_t count) {
+    std::fstream s(file, std::ios::in | std::ios::out | std::ios::binary);
+    s.seekp(static_cast<std::streamoff>(offset));
+    for (std::uintmax_t i = 0; i < count; ++i) {
+        s.put('\0');
+    }
+}
+
+}  // namespace
+
+TEST(TornWrite, ZeroedPageInsideFinalBatchRecovers) {
+    TempDir dir;
+    writeTwoBatchLog(dir.path());
+    std::uintmax_t holeStart = kWalHeaderSize + 1'100 * kRecordSize;  // inside batch B
+    zeroBytes(dir.path() / walName(0), holeStart, 4'096);
+    CrashResult r;
+    harbor::testing::checkRecovered(dir.path(), 13, r);
+    ASSERT_TRUE(r.error.empty()) << r.error;
+    EXPECT_EQ(r.recoveredDurable, 1'100u);  // records 1-1,100 intact; the rest of B was never acknowledged
+    EXPECT_TRUE(r.stateMatches);
+}
+
+TEST(TornWrite, ZeroedPageInsideAcknowledgedBatchFails) {
+    TempDir dir;
+    writeTwoBatchLog(dir.path());
+    zeroBytes(dir.path() / walName(0), kWalHeaderSize + 500 * kRecordSize, 4'096);  // inside batch A
+    CrashResult r;
+    harbor::testing::checkRecovered(dir.path(), 13, r);
+    EXPECT_FALSE(r.error.empty());
+}

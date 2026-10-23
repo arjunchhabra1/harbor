@@ -67,11 +67,12 @@ public:
     // Logs and applies one command; returns its seq. Commits when the batch is full.
     std::uint64_t submit(const Command& cmd, Clock::time_point now) {
         checkUsable();
+        std::uint64_t seq = ++lastSeq_;
         if (pending_ == 0) {
             batchStart_ = now;
+            batchFirst_ = seq;
         }
-        std::uint64_t seq = ++lastSeq_;
-        encodeRecord(seq, cmd, batch_.data() + pending_ * kRecordSize);
+        encodeRecord(seq, batchFirst_, cmd, batch_.data() + pending_ * kRecordSize);
         Reject result = applyCommand(book_, cmd, scratch_);
         outputs_.push_back(PendingOutput{seq, result, fills_.size(), scratch_.size()});
         fills_.insert(fills_.end(), scratch_.begin(), scratch_.end());
@@ -313,6 +314,7 @@ private:
 
     std::vector<std::uint8_t> batch_;  // encoded records of the pending batch
     std::uint32_t pending_ = 0;
+    std::uint64_t batchFirst_ = 0;  // seq of the first pending command
     Clock::time_point batchStart_{};
 
     std::vector<PendingOutput> outputs_;  // released ones first, then pending ones

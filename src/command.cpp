@@ -6,7 +6,7 @@
 
 namespace harbor {
 
-void encodeRecord(std::uint64_t seq, const Command& cmd, std::uint8_t* out) {
+void encodeRecord(std::uint64_t seq, std::uint64_t batchFirst, const Command& cmd, std::uint8_t* out) {
     std::memset(out, 0, kRecordSize);
     putU64(out, seq);
     out[8] = static_cast<std::uint8_t>(cmd.kind);
@@ -28,10 +28,11 @@ void encodeRecord(std::uint64_t seq, const Command& cmd, std::uint8_t* out) {
             putU32(out + 32, cmd.qty);
             break;
     }
+    putU64(out + 36, batchFirst);
     putU32(out + 44, crc32c(out, 44));
 }
 
-bool decodeRecord(const std::uint8_t* in, std::uint64_t& seq, Command& cmd) {
+bool decodeRecord(const std::uint8_t* in, std::uint64_t& seq, std::uint64_t& batchFirst, Command& cmd) {
     if (getU32(in + 44) != crc32c(in, 44)) {
         return false;
     }
@@ -42,6 +43,10 @@ bool decodeRecord(const std::uint8_t* in, std::uint64_t& seq, Command& cmd) {
         return false;
     }
     seq = getU64(in);
+    batchFirst = getU64(in + 36);
+    if (batchFirst > seq) {
+        return false;
+    }
     cmd = Command{};
     cmd.kind = static_cast<Command::Kind>(kind);
     std::uint64_t id = getU64(in + 16);
