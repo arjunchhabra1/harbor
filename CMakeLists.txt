@@ -22,8 +22,11 @@ FetchContent_MakeAvailable(googletest)
 function(harbor_configure_target target)
     target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic -Werror)
     if(HARBOR_SANITIZE)
-        target_compile_options(${target} PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
-        target_link_options(${target} PRIVATE -fsanitize=address,undefined)
+        # -fno-sanitize-recover makes any UBSan report abort the test instead
+        # of printing and exiting 0.
+        target_compile_options(${target} PRIVATE -fsanitize=address,undefined
+            -fno-sanitize-recover=all -fno-omit-frame-pointer)
+        target_link_options(${target} PRIVATE -fsanitize=address,undefined -fno-sanitize-recover=all)
     endif()
 endfunction()
 
