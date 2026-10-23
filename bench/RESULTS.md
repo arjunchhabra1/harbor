@@ -27,14 +27,17 @@ that is actually resting at that point. Mix: 60% add (20% IOC), 30% cancel,
 10% replace, prices clustered around the midpoint with a 10-tick overlap
 between buys and sells. Book: prices 1,000 to 2,000, tick 1, up to 65,536 orders.
 
-## Results (three runs; median throughput, typical percentiles)
+## Results (median of seven runs, typical percentiles)
 
 | Book | Throughput | ≈ ns/op (from throughput) | p50 | p99 | p99.9 | Allocations in timed runs |
 |---|---|---|---|---|---|---|
-| **FastBook** | **26.4M ops/s** | **38 ns** | ≤ 42 ns | 84 ns | 167 ns | **0** |
+| **FastBook** | **26.2M ops/s** | **38 ns** | ≤ 42 ns | 84 ns | 167 ns | **0** |
 | ReferenceBook | 10.7M ops/s | 93 ns | 83 ns | 292 ns | 541 ns | 8,793,133 (throughput run) |
 
-Range across runs: FastBook 24.2M to 27.0M ops/s, ReferenceBook 9.6M to 11.1M.
+Range across seven FastBook runs: 17.9M to 27.0M ops/s. The two slow runs came
+first after a build or an idle period; macOS does not let a process pin itself
+to a performance core, so a run can start on an efficiency core. ReferenceBook
+ranged from 9.6M to 11.1M.
 FastBook's max latency ranged from 10 to 31 µs; those outliers are OS
 scheduling and interrupts, not the book (ReferenceBook's max of about 0.5 ms
 also includes allocator work).

@@ -12,7 +12,7 @@ requires them to agree after every single one.
 
 | Version | Scope | State |
 |---|---|---|
-| **v1** | Order book, price-time matching, IOC, cancel, replace, tests, benchmarks | In progress: books and tests done, benchmarks next |
+| **v1** | Order book, price-time matching, IOC, cancel, replace, tests, benchmarks | Done |
 | v2 | Write-ahead log, snapshots, crash recovery | Planned |
 | v3 | TCP order gateway, UDP market-data feed | Planned |
 | v4 | Hot standby that replays the command log, with failover | Planned |
@@ -53,7 +53,7 @@ Both books expose the same API (`add`, `cancel`, `replace`, `bestBid`,
 ### ReferenceBook: the oracle
 
 `std::map<Price, std::list<Order>>` for each side plus an
-`std::unordered_map` from order id to its list position. About 200 lines and
+`std::unordered_map` from order id to its list position. About 250 lines and
 obviously correct, which is the point: when the two books disagree, this one is
 presumed right.
 
@@ -81,6 +81,30 @@ the difference between one word and up to 15,625.
 When the book is full, an incoming GTC order is rejected only if it does not
 cross the spread. An order that crosses either fills completely or fully
 consumes at least one resting order, which frees the slot it needs.
+
+## Performance
+
+Measured on an Apple M3 (macOS 14.5, Apple clang 16, `-O2 -march=native`) over
+10,000,000 generated operations; full method and caveats in
+[`bench/RESULTS.md`](bench/RESULTS.md).
+
+| Book | Throughput | ≈ ns/op | p99 | Heap allocations |
+|---|---|---|---|---|
+| **FastBook** | **26.2M ops/s** | **38 ns** | 84 ns | **0** |
+| ReferenceBook | 10.7M ops/s | 93 ns | 292 ns | 8.8M |
+
+FastBook is about 2.5x faster than the map-based book and never touches the
+heap after construction; the benchmark verifies this by counting every call to
+`operator new`. Latency percentiles are quantized to Apple Silicon's 24 MHz
+timer (about 42 ns per tick), so throughput is the more precise number here.
+
+Run it yourself:
+
+```bash
+cmake -S . -B build-rel -DCMAKE_BUILD_TYPE=Release
+cmake --build build-rel -j --target harbor_bench
+./build-rel/harbor_bench
+```
 
 ## Testing
 
@@ -132,5 +156,6 @@ ctest --test-dir build-asan --output-on-failure
 include/harbor/   types, FlatHashMap, ReferenceBook, FastBook
 src/              book implementations
 tests/            behavior suite, hash map tests, differential test, op generator
+bench/            benchmark and recorded results
 docs/             design spec
 ```
