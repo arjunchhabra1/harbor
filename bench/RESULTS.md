@@ -62,7 +62,7 @@ allocation made during each timed run.
 # Engine durability (v2)
 
 Produced by `bench/bench_engine.cpp` on the same machine (Apple M3, macOS 14.5,
-Apple clang 16, `-O2 -march=native`), measured on top of `7259f7c`, median of
+Apple clang 16, `-O2 -march=native`), measured with the code in `4e36b43`, median of
 three runs. Commands come from the same generator (seed 42) against a book of up
 to 65,536 orders; the caller drains outputs after every submit.
 
