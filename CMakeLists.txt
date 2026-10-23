@@ -46,3 +46,12 @@ harbor_configure_target(harbor_tests)
 
 include(GoogleTest)
 gtest_discover_tests(harbor_tests)
+
+# Benchmarks: build with -DCMAKE_BUILD_TYPE=Release for meaningful numbers.
+add_executable(harbor_bench bench/bench_books.cpp)
+target_include_directories(harbor_bench PRIVATE tests)
+target_link_libraries(harbor_bench PRIVATE harbor)
+harbor_configure_target(harbor_bench)
+foreach(target harbor harbor_bench)
+    target_compile_options(${target} PRIVATE $<$<CONFIG:Release>:-O2 -march=native>)
+endforeach()
