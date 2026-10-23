@@ -90,10 +90,10 @@ Measured on an Apple M3 (macOS 14.5, Apple clang 16, `-O2 -march=native`) over
 
 | Book | Throughput | ≈ ns/op | p99 | Heap allocations |
 |---|---|---|---|---|
-| **FastBook** | **26.2M ops/s** | **38 ns** | 84 ns | **0** |
-| ReferenceBook | 10.7M ops/s | 93 ns | 292 ns | 8.8M |
+| **FastBook** | **26.9M ops/s** | **37 ns** | 84 ns | **0** |
+| ReferenceBook | 12.4M ops/s | 81 ns | 292 ns | 8.8M |
 
-FastBook is about 2.5x faster than the map-based book and never touches the
+FastBook is about 2.2x faster than the map-based book and never touches the
 heap after construction; the benchmark verifies this by counting every call to
 `operator new`. Latency percentiles are quantized to Apple Silicon's 24 MHz
 timer (about 42 ns per tick), so throughput is the more precise number here.
@@ -108,22 +108,33 @@ cmake --build build-rel -j --target harbor_bench
 
 ## Testing
 
-- **Behavior suite** (24 cases, run on both books via GoogleTest typed tests):
+- **Behavior suite** (26 cases, run on both books via GoogleTest typed tests):
   priority, partial fills, multi-level sweeps, IOC, cancel, every replace rule,
-  every reject, and edge cases such as prices at both ends of the range.
-- **Invariants** checked after every operation: the book is never crossed,
-  level totals equal the sum of their orders, a bitset bit is set exactly when
-  its level is non-empty, the cached best price matches a full scan, and the
-  index matches the live orders.
-- **Differential test**: a seeded generator issues 1,000,000 adds, cancels, and
-  replaces against both books and compares rejects, fills, best prices, and
-  order counts after every operation, plus full depth every 1,000. Cancel and
-  replace targets are drawn from orders that are actually resting, so the run
-  exercises roughly 270K live cancels, 89K live replaces, 120K fills, and 72K
-  `BookFull` rejects. A deliberately planted bug in FastBook's replace logic is
-  caught within the first 1,000 operations.
+  every reject, invalid configs, and edge cases such as prices at both ends of
+  the range and at the int64 limits.
+- **Invariants**: the book is never crossed, level totals equal the sum of their
+  orders, a bitset bit is set exactly when its level is non-empty, the cached
+  best price matches a full scan, and the index matches the live orders.
+  Checked after every operation in the behavior suite and the edge scenario
+  below, and every 1,000 operations in the deep-book scenario.
+- **Differential test**: a seeded generator drives both books with adds,
+  cancels, and replaces, comparing rejects, fills, best prices, and order counts
+  after every operation, plus full depth and both books' invariants. Cancel and
+  replace targets are drawn from orders that are actually resting, and some adds
+  reuse the ids of dead orders. Two scenarios:
+  - *Deep book*: 1,000,000 operations around the middle of a wide range,
+    exercising roughly 270K live cancels, 89K live replaces, and 120K fills.
+  - *Edges*: a tick-5 range with a 64-order pool, with order flow centered on
+    the bottom, middle, and top of the range in turn, so the first and last
+    levels repeatedly empty and refill, off-tick prices are rejected, and the
+    pool fills.
+
+  Two deliberately planted FastBook bugs (one in replace, one in best-bid
+  recomputation at the lowest price level) are each caught within 1,000
+  operations; the second one passed every other test.
 - **Sanitizers**: the whole suite also runs under AddressSanitizer and
-  UndefinedBehaviorSanitizer.
+  UndefinedBehaviorSanitizer, with recovery disabled so any report fails the
+  run.
 - **CI**: GCC and Clang on Linux, each with and without sanitizers.
 
 Replay a differential failure with the seed it prints:
