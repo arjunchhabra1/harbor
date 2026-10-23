@@ -1,5 +1,7 @@
 #include <gtest/gtest.h>
+#include <limits>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <vector>
 #include "harbor/fast_book.hpp"
@@ -253,6 +255,37 @@ TYPED_TEST(BookTest, ContainsTracksLiveOrders) {
     EXPECT_FALSE(this->book.contains(3));
     this->cancel(2);
     EXPECT_FALSE(this->book.contains(2));
+}
+
+TYPED_TEST(BookTest, RejectsInvalidConfig) {
+    constexpr Price kMax = std::numeric_limits<Price>::max();
+    constexpr Price kMin = std::numeric_limits<Price>::min();
+    EXPECT_THROW(TypeParam(BookConfig{100, 200, 0, 8}), std::invalid_argument);     // tick 0
+    EXPECT_THROW(TypeParam(BookConfig{100, 200, -1, 8}), std::invalid_argument);    // tick < 0
+    EXPECT_THROW(TypeParam(BookConfig{200, 100, 1, 8}), std::invalid_argument);     // max < min
+    EXPECT_THROW(TypeParam(BookConfig{0, 1LL << 32, 1, 8}), std::invalid_argument); // too many levels
+    EXPECT_THROW(TypeParam(BookConfig{kMin, kMax, 1, 8}), std::invalid_argument);   // range overflows
+    EXPECT_NO_THROW(TypeParam(BookConfig{kMin, kMax, kMax, 8}));                    // 3 levels, valid
+    EXPECT_NO_THROW(TypeParam(BookConfig{100, 100, 1, 0}));                         // one level, no orders
+}
+
+// Prices at the int64 extremes must not overflow: the levels are
+// INT64_MIN, -1, and INT64_MAX - 1.
+TYPED_TEST(BookTest, ExtremePrices) {
+    constexpr Price kMax = std::numeric_limits<Price>::max();
+    constexpr Price kMin = std::numeric_limits<Price>::min();
+    TypeParam book{BookConfig{kMin, kMax, kMax, 8}};
+    std::vector<Fill> fills;
+    EXPECT_EQ(book.add({1, 1, B, kMin, 1, TimeInForce::GTC}, fills), Reject::None);
+    EXPECT_EQ(book.add({2, 1, S, kMax - 1, 1, TimeInForce::GTC}, fills), Reject::None);
+    EXPECT_EQ(book.add({3, 1, S, kMax, 1, TimeInForce::GTC}, fills), Reject::BadPrice);  // off grid
+    EXPECT_EQ(book.add({4, 1, S, -1, 1, TimeInForce::GTC}, fills), Reject::None);
+    EXPECT_EQ(book.bestBid(), kMin);
+    EXPECT_EQ(book.bestAsk(), -1);
+    EXPECT_EQ(book.add({5, 1, B, kMax - 1, 2, TimeInForce::GTC}, fills), Reject::None);
+    EXPECT_EQ(fills, (Fills{{5, 4, -1, 1}, {5, 2, kMax - 1, 1}}));
+    std::string e;
+    EXPECT_TRUE(book.checkInvariants(e)) << e;
 }
 
 TEST(FastBookOnly, RangeNotMultipleOf64) {

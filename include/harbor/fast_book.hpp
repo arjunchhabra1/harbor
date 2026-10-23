@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 #include "harbor/flat_hash_map.hpp"
+#include "harbor/price_grid.hpp"
 #include "harbor/types.hpp"
 
 namespace harbor {
@@ -14,6 +15,7 @@ namespace harbor {
 // offset, and an occupancy bitset finds the next best level with ctz/clz.
 class FastBook {
 public:
+    // Throws std::invalid_argument for an invalid config (see PriceGrid).
     explicit FastBook(const BookConfig& cfg);
 
     Reject add(const NewOrder& order, std::vector<Fill>& out);
@@ -45,9 +47,6 @@ private:
         std::uint64_t total = 0;
     };
 
-    bool validPrice(Price price) const;
-    std::uint32_t levelOf(Price price) const;
-    Price priceOf(std::uint32_t level) const;
     bool crosses(Side side, std::uint32_t level) const;
 
     void execute(OrderId id, ClientId client, Side side, std::uint32_t level, Quantity qty,
@@ -61,6 +60,7 @@ private:
     std::uint32_t lowestAskAtOrAbove(std::uint32_t level) const;
 
     BookConfig cfg_;
+    PriceGrid grid_;
     std::uint32_t numLevels_;
 
     std::vector<Order> pool_;

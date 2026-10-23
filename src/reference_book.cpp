@@ -4,12 +4,7 @@
 
 namespace harbor {
 
-ReferenceBook::ReferenceBook(const BookConfig& cfg) : cfg_(cfg) {}
-
-bool ReferenceBook::validPrice(Price price) const {
-    return price >= cfg_.minPrice && price <= cfg_.maxPrice &&
-           (price - cfg_.minPrice) % cfg_.tick == 0;
-}
+ReferenceBook::ReferenceBook(const BookConfig& cfg) : cfg_(cfg), grid_(cfg) {}
 
 bool ReferenceBook::crosses(Side side, Price price) const {
     if (side == Side::Buy) {
@@ -23,7 +18,7 @@ Reject ReferenceBook::add(const NewOrder& order, std::vector<Fill>& out) {
     if (order.qty == 0) {
         return Reject::BadQuantity;
     }
-    if (!validPrice(order.price)) {
+    if (!grid_.valid(order.price)) {
         return Reject::BadPrice;
     }
     if (index_.contains(order.id)) {
@@ -57,7 +52,7 @@ Reject ReferenceBook::replace(OrderId id, Price newPrice, Quantity newQty,
     if (newQty == 0) {
         return Reject::BadQuantity;
     }
-    if (!validPrice(newPrice)) {
+    if (!grid_.valid(newPrice)) {
         return Reject::BadPrice;
     }
     Locator loc = found->second;

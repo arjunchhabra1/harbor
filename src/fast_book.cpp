@@ -23,7 +23,8 @@ bool testBit(const std::vector<std::uint64_t>& bits, std::uint32_t i) {
 
 FastBook::FastBook(const BookConfig& cfg)
     : cfg_(cfg),
-      numLevels_(static_cast<std::uint32_t>((cfg.maxPrice - cfg.minPrice) / cfg.tick + 1)),
+      grid_(cfg),
+      numLevels_(grid_.levels()),
       pool_(cfg.maxOrders),
       freeHead_(cfg.maxOrders == 0 ? kNone : 0),
       index_(cfg.maxOrders),
@@ -34,19 +35,6 @@ FastBook::FastBook(const BookConfig& cfg)
     for (std::uint32_t i = 0; i < cfg.maxOrders; ++i) {
         pool_[i].next = i + 1 < cfg.maxOrders ? i + 1 : kNone;
     }
-}
-
-bool FastBook::validPrice(Price price) const {
-    return price >= cfg_.minPrice && price <= cfg_.maxPrice &&
-           (price - cfg_.minPrice) % cfg_.tick == 0;
-}
-
-std::uint32_t FastBook::levelOf(Price price) const {
-    return static_cast<std::uint32_t>((price - cfg_.minPrice) / cfg_.tick);
-}
-
-Price FastBook::priceOf(std::uint32_t level) const {
-    return cfg_.minPrice + static_cast<Price>(level) * cfg_.tick;
 }
 
 bool FastBook::crosses(Side side, std::uint32_t level) const {
@@ -61,13 +49,13 @@ Reject FastBook::add(const NewOrder& order, std::vector<Fill>& out) {
     if (order.qty == 0) {
         return Reject::BadQuantity;
     }
-    if (!validPrice(order.price)) {
+    if (!grid_.valid(order.price)) {
         return Reject::BadPrice;
     }
     if (index_.find(order.id) != nullptr) {
         return Reject::DuplicateId;
     }
-    std::uint32_t level = levelOf(order.price);
+    std::uint32_t level = grid_.levelOf(order.price);
     // A crossing order always frees a slot or fills completely, so only a
     // non-crossing GTC order can be refused for lack of space.
     if (count_ == cfg_.maxOrders && order.tif == TimeInForce::GTC &&
@@ -96,12 +84,12 @@ Reject FastBook::replace(OrderId id, Price newPrice, Quantity newQty, std::vecto
     if (newQty == 0) {
         return Reject::BadQuantity;
     }
-    if (!validPrice(newPrice)) {
+    if (!grid_.valid(newPrice)) {
         return Reject::BadPrice;
     }
     std::uint32_t slot = *found;
     Order& o = pool_[slot];
-    std::uint32_t newLevel = levelOf(newPrice);
+    std::uint32_t newLevel = grid_.levelOf(newPrice);
     if (newLevel == o.level && newQty <= o.remaining) {
         Level& level = o.side == Side::Buy ? bidLevels_[o.level] : askLevels_[o.level];
         level.total -= o.remaining - newQty;
@@ -121,7 +109,7 @@ void FastBook::execute(OrderId id, ClientId client, Side side, std::uint32_t lev
     while (qty > 0 && crosses(side, level)) {
         std::uint32_t best = side == Side::Buy ? bestAsk_ : bestBid_;
         Level& lvl = opposite[best];
-        Price tradePrice = priceOf(best);
+        Price tradePrice = grid_.priceOf(best);
         while (qty > 0 && lvl.head != kNone) {
             std::uint32_t slot = lvl.head;
             Order& passive = pool_[slot];
@@ -243,21 +231,21 @@ std::optional<Price> FastBook::bestBid() const {
     if (bestBid_ == kNone) {
         return std::nullopt;
     }
-    return priceOf(bestBid_);
+    return grid_.priceOf(bestBid_);
 }
 
 std::optional<Price> FastBook::bestAsk() const {
     if (bestAsk_ == kNone) {
         return std::nullopt;
     }
-    return priceOf(bestAsk_);
+    return grid_.priceOf(bestAsk_);
 }
 
 std::uint64_t FastBook::depthAt(Side side, Price price) const {
-    if (!validPrice(price)) {
+    if (!grid_.valid(price)) {
         return 0;
     }
-    std::uint32_t level = levelOf(price);
+    std::uint32_t level = grid_.levelOf(price);
     return side == Side::Buy ? bidLevels_[level].total : askLevels_[level].total;
 }
 

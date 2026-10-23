@@ -8,6 +8,7 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
+#include "harbor/price_grid.hpp"
 #include "harbor/types.hpp"
 
 namespace harbor {
@@ -16,6 +17,7 @@ namespace harbor {
 // Optimized for readability, not speed: it allocates on every resting order.
 class ReferenceBook {
 public:
+    // Throws std::invalid_argument for an invalid config (see PriceGrid).
     explicit ReferenceBook(const BookConfig& cfg);
 
     Reject add(const NewOrder& order, std::vector<Fill>& out);
@@ -42,7 +44,6 @@ private:
         Queue::iterator it;
     };
 
-    bool validPrice(Price price) const;
     bool crosses(Side side, Price price) const;
     // Matches an aggressor against the opposite side, then rests any remainder
     // if it is GTC. Used by both add and the re-entry path of replace.
@@ -52,6 +53,7 @@ private:
     void remove(OrderId id);
 
     BookConfig cfg_;
+    PriceGrid grid_;
     std::map<Price, Queue, std::greater<>> bids_;  // best = begin()
     std::map<Price, Queue> asks_;                  // best = begin()
     std::unordered_map<OrderId, Locator> index_;
