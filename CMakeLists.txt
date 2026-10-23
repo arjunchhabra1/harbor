@@ -34,6 +34,7 @@ target_include_directories(harbor INTERFACE include)
 enable_testing()
 add_executable(harbor_tests
     tests/test_types.cpp
+    tests/test_flat_hash_map.cpp
 )
 target_link_libraries(harbor_tests PRIVATE harbor GTest::gtest_main)
 harbor_configure_target(harbor_tests)
