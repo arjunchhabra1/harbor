@@ -17,12 +17,14 @@ int main(int argc, char** argv) {
     for (std::uint64_t t = 0; t < trials; ++t) {
         harbor::testing::TempDir dir;
         std::uint64_t seed = seedBase + t;
-        auto delay = static_cast<std::uint32_t>(200 + (seed * 7919) % 30'000);
-        auto r = harbor::testing::runCrashTrial(dir.path(), seed, delay);
+        std::uint64_t killAfter = (seed * 7919) % 20'000;
+        auto extra = static_cast<std::uint32_t>((seed * 104'729) % 3'000);
+        auto r = harbor::testing::runCrashTrial(dir.path(), seed, killAfter, extra);
         if (!r.ok()) {
             ++failures;
-            std::printf("FAIL trial %llu seed %llu delay %uus: reported %llu recovered %llu match %d %s\n",
-                        static_cast<unsigned long long>(t), static_cast<unsigned long long>(seed), delay,
+            std::printf("FAIL trial %llu seed %llu kill after %llu +%uus: reported %llu recovered %llu match %d %s\n",
+                        static_cast<unsigned long long>(t), static_cast<unsigned long long>(seed),
+                        static_cast<unsigned long long>(killAfter), extra,
                         static_cast<unsigned long long>(r.reportedDurable),
                         static_cast<unsigned long long>(r.recoveredDurable), r.stateMatches ? 1 : 0,
                         r.error.c_str());

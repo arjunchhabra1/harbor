@@ -14,8 +14,9 @@ TEST(Crash, KillAtRandomPoints) {
     std::uint64_t snapshotsSeen = 0;
     for (std::uint32_t trial = 0; trial < 200; ++trial) {
         TempDir dir;
-        std::uint32_t delay = 200 + (trial * 7919) % 20'000;
-        CrashResult r = harbor::testing::runCrashTrial(dir.path(), trial, delay);
+        std::uint64_t killAfter = (trial * 7919) % 12'000;   // 0 to 12,000 durable commands
+        std::uint32_t extra = (trial * 104'729) % 3'000;     // then 0 to 3 ms more
+        CrashResult r = harbor::testing::runCrashTrial(dir.path(), trial, killAfter, extra);
         ASSERT_TRUE(r.error.empty()) << "trial " << trial << ": " << r.error;
         ASSERT_GE(r.recoveredDurable, r.reportedDurable) << "trial " << trial << ": acknowledged commands lost";
         ASSERT_TRUE(r.stateMatches) << "trial " << trial << " recovered " << r.recoveredDurable;

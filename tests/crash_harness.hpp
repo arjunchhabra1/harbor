@@ -103,10 +103,13 @@ inline void checkRecovered(const std::filesystem::path& dir, std::uint64_t seed,
     }
 }
 
-// Forks a child that runs the engine on `dir`, SIGKILLs it after delayMicros
-// (reading its durability reports while waiting), then recovers and checks.
+// Forks a child that runs the engine on `dir`, waits until it reports at
+// least killAfterSeq durable commands, waits extraMicros more (reading its
+// reports throughout), SIGKILLs it, then recovers and checks. Keying the kill
+// to the child's progress rather than wall time keeps coverage the same on
+// fast machines and slow sanitizer builds.
 inline CrashResult runCrashTrial(const std::filesystem::path& dir, std::uint64_t seed,
-                                 std::uint32_t delayMicros) {
+                                 std::uint64_t killAfterSeq, std::uint32_t extraMicros) {
     CrashResult result;
     int fds[2];
     if (::pipe(fds) != 0) {
@@ -144,10 +147,16 @@ inline CrashResult runCrashTrial(const std::filesystem::path& dir, std::uint64_t
         pending.erase(pending.begin(), pending.begin() + static_cast<std::ptrdiff_t>(whole));
     };
 
-    auto deadline = std::chrono::steady_clock::now() + std::chrono::microseconds(delayMicros);
+    auto giveUp = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+    while (result.reportedDurable < killAfterSeq && std::chrono::steady_clock::now() < giveUp) {
+        readReports();
+        std::this_thread::sleep_for(std::chrono::microseconds(50));
+    }
+    bool reachedTarget = result.reportedDurable >= killAfterSeq;
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::microseconds(extraMicros);
     while (std::chrono::steady_clock::now() < deadline) {
         readReports();
-        std::this_thread::sleep_for(std::chrono::microseconds(100));
+        std::this_thread::sleep_for(std::chrono::microseconds(50));
     }
     ::kill(pid, SIGKILL);
     int status = 0;
@@ -157,6 +166,11 @@ inline CrashResult runCrashTrial(const std::filesystem::path& dir, std::uint64_t
 
     if (!(WIFSIGNALED(status) && WTERMSIG(status) == SIGKILL)) {
         result.error = "child exited before the kill (status " + std::to_string(status) + ")";
+        return result;
+    }
+    if (!reachedTarget) {
+        result.error = "child reported only " + std::to_string(result.reportedDurable) + " of " +
+                       std::to_string(killAfterSeq) + " durable commands within 60 s";
         return result;
     }
     checkRecovered(dir, seed, result);
