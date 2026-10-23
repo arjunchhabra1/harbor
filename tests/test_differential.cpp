@@ -29,16 +29,22 @@ Reject apply(Book& book, const harbor::testing::Op& op, std::vector<Fill>& out) 
     return Reject::None;
 }
 
-}  // namespace
+struct Scenario {
+    BookConfig cfg;
+    Price mid;
+    Price halfWindow;
+    std::uint64_t defaultOps;
+    std::uint64_t checkEvery;  // full depth + invariants of both books
+};
 
-// Replay a failure with: HARBOR_SEED=<seed> ./build/harbor_tests --gtest_filter='Differential.*'
-TEST(Differential, ReferenceAndFastAgree) {
+void runDifferential(const Scenario& sc) {
     std::uint64_t seed = envOr("HARBOR_SEED", 12345);
-    std::uint64_t ops = envOr("HARBOR_DIFF_OPS", 1'000'000);
-    BookConfig cfg{1'000, 2'000, 1, 4096};
+    std::uint64_t ops = envOr("HARBOR_DIFF_OPS", sc.defaultOps);
+    const BookConfig& cfg = sc.cfg;
     ReferenceBook ref{cfg};
     FastBook fast{cfg};
-    harbor::testing::OpGenerator gen(seed, 1'500, 100, cfg.minPrice, cfg.maxPrice);
+    harbor::testing::OpGenerator gen(seed, sc.mid, sc.halfWindow, cfg.minPrice, cfg.maxPrice,
+                                     cfg.tick);
     std::vector<Fill> rf, ff;
     for (std::uint64_t i = 0; i < ops; ++i) {
         auto op = gen.next([&](OrderId id) { return ref.contains(id); });
@@ -50,15 +56,39 @@ TEST(Differential, ReferenceAndFastAgree) {
         ASSERT_EQ(ref.bestBid(), fast.bestBid()) << "seed=" << seed << " op=" << i;
         ASSERT_EQ(ref.bestAsk(), fast.bestAsk()) << "seed=" << seed << " op=" << i;
         ASSERT_EQ(ref.orderCount(), fast.orderCount()) << "seed=" << seed << " op=" << i;
-        if (i % 1000 == 0) {
-            for (Price p = 1'400; p <= 1'600; ++p) {
+        if (i % sc.checkEvery == 0) {
+            for (Price p = cfg.minPrice; p <= cfg.maxPrice; p += cfg.tick) {
                 for (Side s : {Side::Buy, Side::Sell}) {
                     ASSERT_EQ(ref.depthAt(s, p), fast.depthAt(s, p))
                         << "seed=" << seed << " op=" << i << " p=" << p;
                 }
             }
             std::string e;
-            ASSERT_TRUE(fast.checkInvariants(e)) << e << " seed=" << seed << " op=" << i;
+            ASSERT_TRUE(ref.checkInvariants(e)) << "ref: " << e << " seed=" << seed << " op=" << i;
+            ASSERT_TRUE(fast.checkInvariants(e)) << "fast: " << e << " seed=" << seed << " op=" << i;
+        }
+    }
+}
+
+}  // namespace
+
+// Replay a failure with: HARBOR_SEED=<seed> ./build/harbor_tests --gtest_filter='Differential.*'
+
+// A deep book around the midpoint of a wide range: realistic shape, heavy matching.
+TEST(Differential, DeepBook) {
+    runDifferential({BookConfig{1'000, 2'000, 1, 4096}, 1'500, 100, 1'000'000, 1'000});
+}
+
+// A narrow tick-5 range with a 64-order pool, with the order flow centered on
+// the bottom, middle, and top of the range in turn. At the ends the best price
+// regularly falls to the first or last level and those levels empty and refill;
+// off-tick prices are rejected and the pool fills.
+TEST(Differential, EdgesTickAndSmallPool) {
+    for (Price mid : {100, 250, 400}) {
+        SCOPED_TRACE("mid=" + std::to_string(mid));
+        runDifferential({BookConfig{100, 400, 5, 64}, mid, 60, 100'000, 1});
+        if (HasFatalFailure()) {
+            return;
         }
     }
 }
