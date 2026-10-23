@@ -27,14 +27,17 @@ function(harbor_configure_target target)
     endif()
 endfunction()
 
-# Header-only until the first source file lands.
-add_library(harbor INTERFACE)
-target_include_directories(harbor INTERFACE include)
+add_library(harbor STATIC
+    src/reference_book.cpp
+)
+target_include_directories(harbor PUBLIC include)
+harbor_configure_target(harbor)
 
 enable_testing()
 add_executable(harbor_tests
     tests/test_types.cpp
     tests/test_flat_hash_map.cpp
+    tests/test_book_behavior.cpp
 )
 target_link_libraries(harbor_tests PRIVATE harbor GTest::gtest_main)
 harbor_configure_target(harbor_tests)
