@@ -2,6 +2,7 @@
 #include <optional>
 #include <string>
 #include <vector>
+#include "harbor/fast_book.hpp"
 #include "harbor/reference_book.hpp"
 using namespace harbor;
 
@@ -34,7 +35,7 @@ protected:
     }
 };
 
-using Books = ::testing::Types<ReferenceBook>;
+using Books = ::testing::Types<ReferenceBook, FastBook>;
 TYPED_TEST_SUITE(BookTest, Books);
 constexpr auto B = Side::Buy;
 constexpr auto S = Side::Sell;
@@ -240,4 +241,15 @@ TYPED_TEST(BookTest, IdReuseAfterFillAndCancel) {
     EXPECT_EQ(this->add(1, B, 140, 1), Reject::None);
     EXPECT_EQ(this->cancel(1), Reject::None);
     EXPECT_EQ(this->add(1, B, 141, 1), Reject::None);
+}
+
+TEST(FastBookOnly, RangeNotMultipleOf64) {
+    FastBook b{BookConfig{0, 99, 1, 16}};  // 100 levels -> 2 bitset words
+    std::vector<Fill> f;
+    EXPECT_EQ(b.add({1, 1, Side::Buy, 99, 1, TimeInForce::GTC}, f), Reject::None);
+    EXPECT_EQ(b.add({2, 1, Side::Sell, 0, 1, TimeInForce::GTC}, f), Reject::None);
+    ASSERT_EQ(f.size(), 1u);
+    EXPECT_EQ(f[0], (Fill{2, 1, 99, 1}));
+    std::string e;
+    EXPECT_TRUE(b.checkInvariants(e)) << e;
 }

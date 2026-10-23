@@ -29,6 +29,7 @@ endfunction()
 
 add_library(harbor STATIC
     src/reference_book.cpp
+    src/fast_book.cpp
 )
 target_include_directories(harbor PUBLIC include)
 harbor_configure_target(harbor)
