@@ -74,7 +74,9 @@ to 65,536 orders; the caller drains outputs after every submit.
 | Fsync (`fsync`) | 62K ops/s | 0.93M ops/s | 8.0M ops/s |
 | Full (`F_FULLFSYNC`) | 361 ops/s | 21K ops/s | 275K ops/s |
 
-Every cell made zero heap allocations after warm-up.
+Every cell made zero heap allocations after warm-up. Snapshots were disabled in
+these runs; taking a snapshot allocates (it builds the snapshot in memory), so
+the zero-allocation claim covers steady state between snapshots.
 
 `F_FULLFSYNC` is the only mode that forces the SSD to flush its own cache, so
 it is the only one durable against power loss on macOS, and it costs about
@@ -82,6 +84,8 @@ it is the only one durable against power loss on macOS, and it costs about
 per sync is about 760x faster than syncing each one.
 
 ## Commit latency (64 records per commit)
+
+Time for one `commit()`: the `write` of 64 records (3 KB) plus the sync call.
 
 | Sync mode | p50 | p99 |
 |---|---|---|
@@ -97,4 +101,6 @@ per sync is about 760x faster than syncing each one.
 | Snapshot of 65,533 orders + ~10K-command log | 12 ms |
 
 Snapshots cut recovery time by about 15x here, and recovery without one grows
-linearly with the log.
+linearly with the log. These directories were written and reopened with
+`SyncMode::None`, so the times cover reading, checking, and replaying, not the
+sync calls recovery makes in the durable modes.

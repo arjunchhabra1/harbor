@@ -240,3 +240,34 @@ TEST_F(RecoveryTest, CorruptSnapshotThrows) {
     }
     EXPECT_THROW((Engine<FastBook>(kCfg, options(100))), std::runtime_error);
 }
+
+// A snapshot that fails after its batch is durable must say so: the caller
+// should not mistake a successful commit for a failed one.
+TEST_F(RecoveryTest, SnapshotFailureReportsDurableBatch) {
+    EngineOptions o = options(1'000, 100);
+    o.afterSnapshotStep = [](int step) {
+        if (step == 1) {
+            throw std::runtime_error("disk full");
+        }
+    };
+    Engine<FastBook> engine(kCfg, o);
+    EXPECT_THROW(drive(engine, 10, 5'000), SnapshotError);
+    EXPECT_EQ(engine.lastDurableSeq(), 1'000u);
+    std::size_t delivered = 0;
+    engine.drain([&](const Output&) { ++delivered; });
+    EXPECT_GT(delivered, 0u);  // the durable batch's outputs are still released
+    EXPECT_THROW(engine.commit(), std::runtime_error);  // but the engine is now unusable
+}
+
+TEST_F(RecoveryTest, LeavesOtherTmpFilesAlone) {
+    {
+        Engine<FastBook> engine(kCfg, options(100));
+        drive(engine, 11, 300);
+        engine.commit();
+    }
+    std::ofstream(dir.path() / "notes.tmp") << "not Harbor's";
+    std::ofstream(dir.path() / (snapName(9) + ".tmp")) << "leftover snapshot";
+    Engine<FastBook> recovered(kCfg, options(100));
+    EXPECT_TRUE(std::filesystem::exists(dir.path() / "notes.tmp"));
+    EXPECT_FALSE(std::filesystem::exists(dir.path() / (snapName(9) + ".tmp")));
+}

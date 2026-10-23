@@ -17,6 +17,9 @@ A low-latency exchange matching engine in C++20.
 - **FastBook**: price-level array, occupancy bitset (`ctz`/`clz` to find the
   next best price), intrusive FIFO per level, fixed slot pool, open-addressing
   id index. No heap allocation after construction.
+- **Engine**: logs every command, matches it immediately, and releases its
+  result only after its group commit is synced. Snapshots rotate log segments;
+  recovery restores the newest snapshot and replays its segment.
 - **ReferenceBook**: `std::map` + `std::list`, kept simple as a correctness oracle.
 - Matching: best price first, then time; trades at the resting price; replace
   keeps queue position only when reducing quantity at the same price.
@@ -33,8 +36,8 @@ Apple M3, Apple clang 16, `-O2 -march=native`, 10M generated operations
 
 Durability ([details](bench/RESULTS.md#engine-durability-v2)): with group commit
 of 1,024 commands, 8.0M ops/s with `fsync` and 275K ops/s with `F_FULLFSYNC`
-(full SSD flush; about 760x faster than syncing each command). Recovering 65K
-orders from a snapshot takes 12 ms.
+(full SSD flush; about 760x faster than syncing each command). Recovering a
+65K-order snapshot plus a 10K-command log takes 12 ms.
 
 ## Testing
 

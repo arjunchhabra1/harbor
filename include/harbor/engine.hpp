@@ -33,6 +33,14 @@ struct Output {
     std::span<const Fill> fills;  // valid until drain() returns
 };
 
+// Thrown by commit() (and so by a submit() that fills a batch) when the batch
+// itself was written, synced, and its outputs released, but the snapshot that
+// followed failed. The commands are durable; drain() still delivers them. The
+// engine is unusable afterwards; reopen the directory to recover.
+struct SnapshotError : std::runtime_error {
+    using std::runtime_error::runtime_error;
+};
+
 // Wraps a book with a write-ahead log. Every command is logged and applied
 // immediately, but its output is released only after the batch containing it
 // has been written and synced, so nothing is ever acknowledged that a crash
@@ -113,6 +121,8 @@ public:
     }
 
     // Calls onOutput(const Output&) for each released output in seq order.
+    // onOutput must not call back into the engine: a submit() could move the
+    // buffers the Output spans point into.
     template <class F>
     void drain(F&& onOutput) {
         if (released_ == 0) {
@@ -194,9 +204,9 @@ private:
             std::filesystem::remove(walPath(previous));
             syncDir(opts_.dir, opts_.sync);
             hook(4);
-        } catch (...) {
+        } catch (const std::exception& e) {
             broken_ = true;
-            throw;
+            throw SnapshotError(std::string("batch is durable but the snapshot failed: ") + e.what());
         }
     }
 
@@ -225,7 +235,7 @@ private:
         std::vector<std::pair<std::uint64_t, std::filesystem::path>> segmentFiles;
         for (const auto& entry : std::filesystem::directory_iterator(opts_.dir)) {
             std::string name = entry.path().filename().string();
-            if (name.size() > 4 && name.compare(name.size() - 4, 4, ".tmp") == 0) {
+            if (segmentOf(name, "snap-", ".bin.tmp")) {  // only our own unfinished snapshots
                 stale.push_back(entry.path());
             } else if (auto n = segmentOf(name, "snap-", ".bin")) {
                 newestSnap = std::max(newestSnap.value_or(0), *n);
@@ -284,11 +294,14 @@ private:
             if (scan.tornTail) {
                 truncateFile(log, scan.validBytes);
             }
-            lastSeq_ = durableSeq_ = scan.nextSeq - 1;
             wal_.emplace(File::openAppend(log));
-            if (scan.tornTail) {
-                wal_->sync(opts_.sync);
-            }
+            // A crash between a commit's write and its sync leaves records in the
+            // page cache that this process can read but a power loss could still
+            // erase. Sync them, and the directory entries recovery relies on,
+            // before reporting them as durable.
+            wal_->sync(opts_.sync);
+            syncDir(opts_.dir, opts_.sync);
+            lastSeq_ = durableSeq_ = scan.nextSeq - 1;
         }
         scratch_.clear();
 
