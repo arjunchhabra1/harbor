@@ -9,6 +9,7 @@
 #include <new>
 #include <string>
 #include <vector>
+#include "harbor/command.hpp"
 #include "harbor/fast_book.hpp"
 #include "harbor/reference_book.hpp"
 #include "op_generator.hpp"
@@ -48,19 +49,6 @@ constexpr std::size_t kThroughputOps = 10'000'000;
 constexpr std::size_t kWarmupOps = 100'000;
 constexpr std::size_t kLatencyOps = 1'000'000;
 
-template <class Book>
-inline Reject apply(Book& book, const Op& op, std::vector<Fill>& out) {
-    switch (op.kind) {
-        case Op::Kind::Add:
-            return book.add(op.order, out);
-        case Op::Kind::Cancel:
-            return book.cancel(op.id);
-        case Op::Kind::Replace:
-            return book.replace(op.id, op.price, op.qty, out);
-    }
-    return Reject::None;
-}
-
 // Ops are generated against a scratch ReferenceBook so cancel and replace
 // targets are orders that are actually resting at that point in the stream.
 std::vector<Op> generate(std::size_t count) {
@@ -71,7 +59,7 @@ std::vector<Op> generate(std::size_t count) {
     std::vector<Fill> fills;
     for (std::size_t i = 0; i < count; ++i) {
         ops.push_back(gen.next([&](OrderId id) { return scratch.contains(id); }));
-        apply(scratch, ops.back(), fills);
+        applyCommand(scratch, ops.back(), fills);
     }
     return ops;
 }
@@ -95,7 +83,7 @@ void run(const char* name, const std::vector<Op>& ops) {
         std::uint64_t before = gAllocations.load();
         auto start = Clock::now();
         for (const Op& op : ops) {
-            apply(book, op, fills);
+            applyCommand(book, op, fills);
         }
         double seconds = std::chrono::duration<double>(Clock::now() - start).count();
         std::uint64_t allocs = gAllocations.load() - before;
@@ -107,13 +95,13 @@ void run(const char* name, const std::vector<Op>& ops) {
     {
         Book book{kCfg};
         for (std::size_t i = 0; i < kWarmupOps; ++i) {
-            apply(book, ops[i], fills);
+            applyCommand(book, ops[i], fills);
         }
         std::vector<std::int64_t> samples(kLatencyOps);
         std::uint64_t before = gAllocations.load();
         for (std::size_t i = 0; i < kLatencyOps; ++i) {
             auto start = Clock::now();
-            apply(book, ops[kWarmupOps + i], fills);
+            applyCommand(book, ops[kWarmupOps + i], fills);
             auto end = Clock::now();
             samples[i] = std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
         }

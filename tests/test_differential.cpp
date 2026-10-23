@@ -2,6 +2,7 @@
 #include <cstdlib>
 #include <string>
 #include <vector>
+#include "harbor/command.hpp"
 #include "harbor/fast_book.hpp"
 #include "harbor/reference_book.hpp"
 #include "op_generator.hpp"
@@ -12,21 +13,6 @@ namespace {
 std::uint64_t envOr(const char* name, std::uint64_t fallback) {
     const char* value = std::getenv(name);
     return value == nullptr ? fallback : std::strtoull(value, nullptr, 10);
-}
-
-template <class Book>
-Reject apply(Book& book, const harbor::testing::Op& op, std::vector<Fill>& out) {
-    using Kind = harbor::testing::Op::Kind;
-    switch (op.kind) {
-        case Kind::Add:
-            return book.add(op.order, out);
-        case Kind::Cancel:
-            out.clear();
-            return book.cancel(op.id);
-        case Kind::Replace:
-            return book.replace(op.id, op.price, op.qty, out);
-    }
-    return Reject::None;
 }
 
 struct Scenario {
@@ -48,8 +34,8 @@ void runDifferential(const Scenario& sc) {
     std::vector<Fill> rf, ff;
     for (std::uint64_t i = 0; i < ops; ++i) {
         auto op = gen.next([&](OrderId id) { return ref.contains(id); });
-        Reject rr = apply(ref, op, rf);
-        Reject fr = apply(fast, op, ff);
+        Reject rr = applyCommand(ref, op, rf);
+        Reject fr = applyCommand(fast, op, ff);
         ASSERT_EQ(rr, fr) << "seed=" << seed << " op=" << i << " ref=" << toString(rr)
                           << " fast=" << toString(fr);
         ASSERT_EQ(rf, ff) << "seed=" << seed << " op=" << i;
