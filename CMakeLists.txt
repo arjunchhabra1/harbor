@@ -52,6 +52,7 @@ add_executable(harbor_tests
     tests/test_command_codec.cpp
     tests/test_wal.cpp
     tests/test_snapshot.cpp
+    tests/test_engine.cpp
 )
 target_link_libraries(harbor_tests PRIVATE harbor GTest::gtest_main)
 harbor_configure_target(harbor_tests)
