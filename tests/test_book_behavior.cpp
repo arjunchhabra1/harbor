@@ -243,6 +243,18 @@ TYPED_TEST(BookTest, IdReuseAfterFillAndCancel) {
     EXPECT_EQ(this->add(1, B, 141, 1), Reject::None);
 }
 
+TYPED_TEST(BookTest, ContainsTracksLiveOrders) {
+    EXPECT_FALSE(this->book.contains(1));
+    this->add(1, S, 151, 5);
+    this->add(2, S, 152, 5);
+    EXPECT_TRUE(this->book.contains(1));
+    this->add(3, B, 151, 5);  // fills order 1
+    EXPECT_FALSE(this->book.contains(1));
+    EXPECT_FALSE(this->book.contains(3));
+    this->cancel(2);
+    EXPECT_FALSE(this->book.contains(2));
+}
+
 TEST(FastBookOnly, RangeNotMultipleOf64) {
     FastBook b{BookConfig{0, 99, 1, 16}};  // 100 levels -> 2 bitset words
     std::vector<Fill> f;

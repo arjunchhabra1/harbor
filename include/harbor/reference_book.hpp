@@ -26,6 +26,7 @@ public:
     std::optional<Price> bestAsk() const;
     std::uint64_t depthAt(Side side, Price price) const;
     std::size_t orderCount() const { return index_.size(); }
+    bool contains(OrderId id) const { return index_.contains(id); }
     bool checkInvariants(std::string& error) const;
 
 private:
