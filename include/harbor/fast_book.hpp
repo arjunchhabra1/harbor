@@ -29,6 +29,25 @@ public:
     bool contains(OrderId id) const { return index_.find(id) != nullptr; }
     bool checkInvariants(std::string& error) const;
 
+    // Visits resting orders: bids best price first, then asks best price
+    // first, each level in time priority. Uses the bitset, so empty levels
+    // cost nothing. f(OrderId, ClientId, Side, Price, Quantity remaining)
+    template <class F>
+    void forEachResting(F&& f) const {
+        for (std::uint32_t level = bestBid_; level != kNone;
+             level = level == 0 ? kNone : highestBidAtOrBelow(level - 1)) {
+            for (std::uint32_t s = bidLevels_[level].head; s != kNone; s = pool_[s].next) {
+                f(pool_[s].id, pool_[s].client, Side::Buy, grid_.priceOf(level), pool_[s].remaining);
+            }
+        }
+        for (std::uint32_t level = bestAsk_; level != kNone;
+             level = level + 1 >= numLevels_ ? kNone : lowestAskAtOrAbove(level + 1)) {
+            for (std::uint32_t s = askLevels_[level].head; s != kNone; s = pool_[s].next) {
+                f(pool_[s].id, pool_[s].client, Side::Sell, grid_.priceOf(level), pool_[s].remaining);
+            }
+        }
+    }
+
 private:
     static constexpr std::uint32_t kNone = UINT32_MAX;
 

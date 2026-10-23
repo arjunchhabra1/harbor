@@ -257,6 +257,23 @@ TYPED_TEST(BookTest, ContainsTracksLiveOrders) {
     EXPECT_FALSE(this->book.contains(2));
 }
 
+TYPED_TEST(BookTest, ForEachRestingOrder) {
+    this->add(1, B, 150, 2);
+    this->add(2, B, 150, 3);
+    this->add(3, B, 151, 1);
+    this->add(4, S, 155, 4);
+    this->add(5, S, 153, 5);
+    std::vector<OrderId> ids;
+    std::vector<Quantity> qtys;
+    this->book.forEachResting([&](OrderId id, ClientId client, Side, Price, Quantity remaining) {
+        EXPECT_EQ(client, 1u);
+        ids.push_back(id);
+        qtys.push_back(remaining);
+    });
+    EXPECT_EQ(ids, (std::vector<OrderId>{3, 1, 2, 5, 4}));
+    EXPECT_EQ(qtys, (std::vector<Quantity>{1, 2, 3, 5, 4}));
+}
+
 TYPED_TEST(BookTest, RejectsInvalidConfig) {
     constexpr Price kMax = std::numeric_limits<Price>::max();
     constexpr Price kMin = std::numeric_limits<Price>::min();
