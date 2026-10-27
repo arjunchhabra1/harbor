@@ -29,6 +29,14 @@ public:
     std::uint64_t depthAt(Side side, Price price) const;
     std::size_t orderCount() const { return index_.size(); }
     bool contains(OrderId id) const { return index_.contains(id); }
+    std::optional<RestingOrder> find(OrderId id) const {
+        auto found = index_.find(id);
+        if (found == index_.end()) {
+            return std::nullopt;
+        }
+        const Locator& loc = found->second;
+        return RestingOrder{id, loc.it->client, loc.side, loc.price, loc.it->remaining};
+    }
     bool checkInvariants(std::string& error) const;
 
     // Visits resting orders: bids best price first, then asks best price

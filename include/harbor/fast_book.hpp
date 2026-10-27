@@ -27,6 +27,14 @@ public:
     std::uint64_t depthAt(Side side, Price price) const;
     std::size_t orderCount() const { return count_; }
     bool contains(OrderId id) const { return index_.find(id) != nullptr; }
+    std::optional<RestingOrder> find(OrderId id) const {
+        const std::uint32_t* slot = index_.find(id);
+        if (slot == nullptr) {
+            return std::nullopt;
+        }
+        const Order& o = pool_[*slot];
+        return RestingOrder{o.id, o.client, o.side, grid_.priceOf(o.level), o.remaining};
+    }
     bool checkInvariants(std::string& error) const;
 
     // Visits resting orders: bids best price first, then asks best price

@@ -11,16 +11,6 @@
 
 namespace harbor {
 
-struct RestingOrder {
-    OrderId id;
-    ClientId client;
-    Side side;
-    Price price;
-    Quantity remaining;
-
-    bool operator==(const RestingOrder&) const = default;
-};
-
 // A book's resting orders in price-time order, plus where it sits in the log.
 struct Snapshot {
     std::uint64_t segment;  // the log segment that continues after this snapshot

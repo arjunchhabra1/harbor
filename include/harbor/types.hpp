@@ -42,6 +42,17 @@ struct BookConfig {
     bool operator==(const BookConfig&) const = default;
 };
 
+// One order resting in a book.
+struct RestingOrder {
+    OrderId id;
+    ClientId client;
+    Side side;
+    Price price;
+    Quantity remaining;
+
+    bool operator==(const RestingOrder&) const = default;
+};
+
 inline const char* toString(Reject r) {
     switch (r) {
         case Reject::None:         return "None";

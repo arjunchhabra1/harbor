@@ -274,6 +274,16 @@ TYPED_TEST(BookTest, ForEachRestingOrder) {
     EXPECT_EQ(qtys, (std::vector<Quantity>{1, 2, 3, 5, 4}));
 }
 
+TYPED_TEST(BookTest, FindReturnsRestingState) {
+    EXPECT_FALSE(this->book.find(1).has_value());
+    this->add(1, B, 150, 10);
+    this->add(2, S, 150, 4);  // fills 4 of order 1
+    auto found = this->book.find(1);
+    ASSERT_TRUE(found.has_value());
+    EXPECT_EQ(*found, (RestingOrder{1, 1, B, 150, 6}));
+    EXPECT_FALSE(this->book.find(2).has_value());
+}
+
 TYPED_TEST(BookTest, RejectsInvalidConfig) {
     constexpr Price kMax = std::numeric_limits<Price>::max();
     constexpr Price kMin = std::numeric_limits<Price>::min();
