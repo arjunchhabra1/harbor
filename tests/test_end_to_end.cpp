@@ -137,6 +137,7 @@ TEST(EndToEnd, ListenerMatchesEngineOverUdp) {
         return fetchSnapshotTcp("127.0.0.1", server.snapshotPort(), feedSeq, orders);
     });
     std::atomic<bool> stop{false};
+    std::atomic<std::uint64_t> listenerSeq{0};  // the receiver thread owns the listener; others read this
     std::thread receiver([&] {
         std::vector<std::uint8_t> buf(2'048);
         while (!stop.load()) {
@@ -145,6 +146,7 @@ TEST(EndToEnd, ListenerMatchesEngineOverUdp) {
                 ssize_t n = ::recv(feedSocket.get(), buf.data(), buf.size(), 0);
                 if (n > 0) {
                     listener.onPacket(std::span<const std::uint8_t>(buf.data(), static_cast<std::size_t>(n)));
+                    listenerSeq.store(listener.book().lastSeq(), std::memory_order_release);
                 }
             }
         }
@@ -186,7 +188,7 @@ TEST(EndToEnd, ListenerMatchesEngineOverUdp) {
         ResponseMsg r{};
         ASSERT_TRUE(c.expect(MsgType::Response, r));
     }
-    for (int i = 0; i < 500 && listener.book().lastSeq() != server.lastFeedSeq(); ++i) {
+    for (int i = 0; i < 500 && listenerSeq.load(std::memory_order_acquire) != server.lastFeedSeq(); ++i) {
         std::this_thread::sleep_for(10ms);
     }
     stop = true;
@@ -203,4 +205,82 @@ TEST(EndToEnd, ListenerMatchesEngineOverUdp) {
     });
     EXPECT_EQ(fromFeed, snapshot);
     EXPECT_GT(snapshot.size(), 0u);
+}
+
+#include <csignal>
+#include <sys/wait.h>
+#include <unistd.h>
+#include "harbor/bytes.hpp"
+
+TEST(EndToEnd, CrashKeepsAcknowledgedOrders) {
+    harbor::testing::TempDir dir;
+    ServerOptions o;
+    o.book = BookConfig{100, 200, 1, 65'536};
+    o.engine.dir = dir.path();
+    o.engine.maxBatch = 64;
+    o.engine.maxDelay = 200us;
+    o.engine.sync = SyncMode::None;  // a SIGKILL keeps the page cache; this tests the recovery logic
+
+    int fds[2];
+    ASSERT_EQ(::pipe(fds), 0);
+    pid_t pid = ::fork();
+    ASSERT_GE(pid, 0);
+    if (pid == 0) {
+        ::close(fds[0]);
+        try {
+            Server child(o);
+            child.start();
+            std::uint8_t port[2];
+            putU16(port, child.orderPort());
+            if (::write(fds[1], port, 2) != 2) {
+                ::_exit(3);
+            }
+            for (;;) {
+                ::pause();  // run until killed
+            }
+        } catch (...) {
+            ::_exit(2);
+        }
+    }
+    ::close(fds[1]);
+    std::uint8_t portBytes[2];
+    ASSERT_EQ(::read(fds[0], portBytes, 2), 2);
+    ::close(fds[0]);
+
+    std::set<std::uint32_t> acknowledged;
+    {
+        TestClient c(getU16(portBytes));
+        c.send(Login{1});
+        LoginAccepted ok{};
+        ASSERT_TRUE(c.expect(MsgType::LoginAccepted, ok));
+        for (std::uint32_t i = 0; i < 2'000; ++i) {
+            c.send(NewOrderMsg{i, Side::Buy, TimeInForce::GTC, 100 + static_cast<Price>(i % 50), 1});
+        }
+        ResponseMsg r{};
+        while (acknowledged.size() < 1'000 && c.expect(MsgType::Response, r, 5'000)) {
+            if (r.result == Reject::None) {
+                acknowledged.insert(r.clientOrderId);
+            }
+        }
+        ::kill(pid, SIGKILL);  // mid-traffic: more orders are in flight
+        int status = 0;
+        ::waitpid(pid, &status, 0);
+        ASSERT_TRUE(WIFSIGNALED(status));
+    }
+    ASSERT_GE(acknowledged.size(), 1'000u);
+
+    Server restarted(o);
+    restarted.start();
+    std::uint64_t feedSeq = 0;
+    std::vector<SnapshotOrderMsg> snapshot;
+    ASSERT_TRUE(fetchSnapshotTcp("127.0.0.1", restarted.snapshotPort(), feedSeq, snapshot));
+    restarted.stop();
+    std::set<std::uint32_t> present;
+    for (const auto& order : snapshot) {
+        present.insert(clientOrderIdOf(order.id));
+    }
+    for (std::uint32_t id : acknowledged) {
+        EXPECT_TRUE(present.contains(id)) << "acknowledged order " << id << " lost in the crash";
+    }
+    EXPECT_GE(present.size(), acknowledged.size());  // anything durable but unacknowledged is also kept
 }

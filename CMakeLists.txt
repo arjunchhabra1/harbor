@@ -98,6 +98,13 @@ add_executable(harbor_bench_engine bench/bench_engine.cpp bench/alloc_counter.cp
 target_include_directories(harbor_bench_engine PRIVATE tests)
 target_link_libraries(harbor_bench_engine PRIVATE harbor)
 harbor_configure_target(harbor_bench_engine)
+# Demo tools: harbor_server, harbor_client, harbor_listen
+foreach(tool harbor_server harbor_client harbor_listen)
+    add_executable(${tool} tools/${tool}.cpp)
+    target_link_libraries(${tool} PRIVATE harbor)
+    harbor_configure_target(${tool})
+endforeach()
+
 # Crash campaign: ./harbor_crash_matrix [trials] [seed]
 add_executable(harbor_crash_matrix tools/crash_matrix.cpp)
 target_include_directories(harbor_crash_matrix PRIVATE tests)

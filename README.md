@@ -64,7 +64,15 @@ cmake --build build -j
 ctest --test-dir build --output-on-failure
 ```
 
-Add `-DHARBOR_SANITIZE=ON` for sanitizers. Benchmarks: configure with
+Add `-DHARBOR_SANITIZE=ON` for sanitizers.
+
+Try it (three terminals):
+
+```bash
+./build/harbor_listen --feed-port 9100 --snapshot-port 9001
+./build/harbor_server --dir /tmp/harbor-data --feed-port 9100
+./build/harbor_client --client 1 --id 1 buy 500000 10
+``` Benchmarks: configure with
 `-DCMAKE_BUILD_TYPE=Release` and run `./build-rel/harbor_bench`.
 
 MIT licensed.
