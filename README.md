@@ -23,6 +23,8 @@ A low-latency exchange matching engine in C++20.
 - **Server**: a network thread (kqueue/epoll gateway) and an engine thread
   connected by lock-free SPSC rings. Clients get a response only once their
   command is durable; fills are reported to both parties.
+- **Market data**: every order event on a sequenced UDP feed; listeners
+  rebuild the exact book and recover from any lost packet with a TCP snapshot.
 - **ReferenceBook**: `std::map` + `std::list`, kept simple as a correctness oracle.
 - Matching: best price first, then time; trades at the resting price; replace
   keeps queue position only when reducing quantity at the same price.

@@ -58,6 +58,7 @@ add_library(harbor STATIC
     src/engine_loop.cpp
     src/gateway.cpp
     src/server.cpp
+    src/feed_listener.cpp
 )
 target_include_directories(harbor PUBLIC include)
 target_link_libraries(harbor PUBLIC Threads::Threads)

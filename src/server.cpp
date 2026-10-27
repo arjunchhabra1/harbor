@@ -1,14 +1,27 @@
 #include "harbor/server.hpp"
 
 #include <chrono>
+#include "harbor/feed_listener.hpp"
 
 namespace harbor {
+
+namespace {
+
+// Each start is a new feed session: feed seqs restart with the recovered
+// engine, so listeners must be able to tell this run's seqs from the last one's.
+GatewayOptions withNewFeedSession(const ServerOptions& options) {
+    GatewayOptions g = options.gateway;
+    g.feedSession = nextFeedSession(options.engine.dir, options.engine.sync);
+    return g;
+}
+
+}  // namespace
 
 Server::Server(const ServerOptions& options)
     : inbound_(std::make_unique<InboundRing>()),
       outbound_(std::make_unique<OutboundRing>()),
       loop_(options.book, options.engine, *inbound_, *outbound_),
-      gateway_(options.gateway, *inbound_, *outbound_,
+      gateway_(withNewFeedSession(options), *inbound_, *outbound_,
                [this] { return std::pair{loop_.lastDurableSeq(), loop_.lastFeedSeq()}; }) {}
 
 Server::~Server() { stop(); }

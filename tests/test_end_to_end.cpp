@@ -110,3 +110,97 @@ TEST(EndToEnd, ManyClientsTrade) {
     }
     EXPECT_EQ(byMatch.rbegin()->first, byMatch.size());  // match ids 1..N with none missing
 }
+
+#include "harbor/feed_listener.hpp"
+#include <sys/socket.h>
+#include <poll.h>
+
+TEST(EndToEnd, ListenerMatchesEngineOverUdp) {
+    harbor::testing::TempDir dir;
+    constexpr BookConfig cfg{100, 200, 1, 65'536};
+    std::uint16_t feedPort = 0;
+    Fd feedSocket = openUdp(0, feedPort);
+    int rcvbuf = 8 << 20;
+    ::setsockopt(feedSocket.get(), SOL_SOCKET, SO_RCVBUF, &rcvbuf, sizeof rcvbuf);
+
+    ServerOptions o;
+    o.book = cfg;
+    o.engine.dir = dir.path();
+    o.engine.maxBatch = 1'024;
+    o.engine.maxDelay = 200us;
+    o.engine.sync = SyncMode::None;
+    o.gateway.feedPort = feedPort;
+    Server server(o);
+    server.start();
+
+    FeedListener listener(cfg, [&](std::uint64_t& feedSeq, std::vector<SnapshotOrderMsg>& orders) {
+        return fetchSnapshotTcp("127.0.0.1", server.snapshotPort(), feedSeq, orders);
+    });
+    std::atomic<bool> stop{false};
+    std::thread receiver([&] {
+        std::vector<std::uint8_t> buf(2'048);
+        while (!stop.load()) {
+            pollfd p{feedSocket.get(), POLLIN, 0};
+            if (::poll(&p, 1, 20) > 0) {
+                ssize_t n = ::recv(feedSocket.get(), buf.data(), buf.size(), 0);
+                if (n > 0) {
+                    listener.onPacket(std::span<const std::uint8_t>(buf.data(), static_cast<std::size_t>(n)));
+                }
+            }
+        }
+    });
+
+    std::vector<std::thread> clients;
+    for (int k = 0; k < 4; ++k) {
+        clients.emplace_back([&, k] {
+            TestClient c(server.orderPort());
+            c.send(Login{static_cast<ClientId>(k + 1)});
+            LoginAccepted ok{};
+            c.expect(MsgType::LoginAccepted, ok);
+            std::mt19937 rng(static_cast<unsigned>(100 + k));
+            for (std::uint32_t i = 0; i < 2'000; ++i) {
+                Side side = rng() % 2 ? Side::Buy : Side::Sell;
+                c.send(NewOrderMsg{i, side, TimeInForce::GTC, 150 + static_cast<Price>(rng() % 21) - 10, 1 + rng() % 5});
+            }
+            std::vector<std::uint8_t> payload;
+            std::uint32_t responses = 0;
+            while (responses < 2'000) {
+                auto type = c.nextType(payload, 10'000);
+                if (!type) {
+                    return;
+                }
+                responses += *type == MsgType::Response ? 1 : 0;
+            }
+        });
+    }
+    for (auto& t : clients) {
+        t.join();
+    }
+    // One more event so a lost final packet is noticed, then wait for the listener to catch up.
+    {
+        TestClient c(server.orderPort());
+        c.send(Login{99});
+        LoginAccepted ok{};
+        ASSERT_TRUE(c.expect(MsgType::LoginAccepted, ok));
+        c.send(NewOrderMsg{1, Side::Buy, TimeInForce::GTC, 100, 1});
+        ResponseMsg r{};
+        ASSERT_TRUE(c.expect(MsgType::Response, r));
+    }
+    for (int i = 0; i < 500 && listener.book().lastSeq() != server.lastFeedSeq(); ++i) {
+        std::this_thread::sleep_for(10ms);
+    }
+    stop = true;
+    receiver.join();
+
+    std::uint64_t snapSeq = 0;
+    std::vector<SnapshotOrderMsg> snapshot;
+    ASSERT_TRUE(fetchSnapshotTcp("127.0.0.1", server.snapshotPort(), snapSeq, snapshot));
+    server.stop();
+    EXPECT_EQ(listener.book().lastSeq(), snapSeq);
+    std::vector<SnapshotOrderMsg> fromFeed;
+    listener.book().book().forEachResting([&](OrderId id, ClientId, Side s, Price p, Quantity q) {
+        fromFeed.push_back(SnapshotOrderMsg{id, s, p, q});
+    });
+    EXPECT_EQ(fromFeed, snapshot);
+    EXPECT_GT(snapshot.size(), 0u);
+}
