@@ -51,6 +51,7 @@ add_library(harbor STATIC
     src/file_io.cpp
     src/wal.cpp
     src/snapshot.cpp
+    src/protocol.cpp
 )
 target_include_directories(harbor PUBLIC include)
 target_link_libraries(harbor PUBLIC Threads::Threads)
@@ -70,6 +71,7 @@ add_executable(harbor_tests
     tests/test_recovery.cpp
     tests/test_crash.cpp
     tests/test_spsc_ring.cpp
+    tests/test_protocol.cpp
 )
 target_link_libraries(harbor_tests PRIVATE harbor GTest::gtest_main)
 harbor_configure_target(harbor_tests)
