@@ -104,3 +104,59 @@ Snapshots cut recovery time by about 15x here, and recovery without one grows
 linearly with the log. These directories were written and reopened with
 `SyncMode::None`, so the times cover reading, checking, and replaying, not the
 sync calls recovery makes in the durable modes.
+
+# Network (v3)
+
+Produced by `bench/bench_network.cpp` on the same machine (Apple M3, macOS 14.5,
+Apple clang 16, `-O2 -march=native`), with the code in `d1bb34b`, median of
+three runs. Everything runs over localhost TCP and UDP in one process: a
+`Server` (network thread + engine thread) and benchmark clients.
+
+## Order round trip
+
+One client sends a GTC order and waits for its `Response` before sending the
+next; the response is only sent once the order is durable. The engine commits
+as soon as it is idle (`maxDelay` 0), so this is one order's full path: socket,
+gateway, ring, matching, log write and sync, ring, gateway, socket.
+
+| Sync mode | p50 | p99 | p99.9 |
+|---|---|---|---|
+| None | 19 µs | 71 µs | 129 µs |
+| Fsync | 35 µs | 111 µs | 196 µs |
+| Full (`F_FULLFSYNC`) | 2.99 ms | 4.5 ms | 9.9 ms |
+
+With `Full`, nearly all of the time is the drive cache flush (about 3 ms,
+matching the commit latency above).
+
+## Pipelined throughput
+
+Four clients each send 200,000 orders without waiting and count responses
+(`maxBatch` 1,024, `maxDelay` 100 µs).
+
+| Sync mode | Durable orders/s |
+|---|---|
+| None | 4.6M |
+| Fsync | 4.5M |
+
+Group commit is why `fsync` barely costs anything here: one sync covers up to
+1,024 orders.
+
+## Order to feed
+
+Time from sending an order to receiving its `Added` event on the UDP feed:
+p50 20.5 µs, p99 61 µs, p99.9 124 µs (sync None).
+
+## SPSC ring
+
+| Measure | Result |
+|---|---|
+| Ping-pong between two threads | 79 ns per round trip |
+| One-way throughput | 26.3M items/s |
+
+## A bug these numbers caught
+
+The first run showed every round trip at about 1.1 ms regardless of sync
+mode. The network thread slept in `poll` with a 1 ms timeout and nothing woke
+it when the engine pushed a response. A self-pipe wakeup (written only when the
+network thread is actually asleep) brought the p50 round trip from 1,125 µs to
+19 µs.

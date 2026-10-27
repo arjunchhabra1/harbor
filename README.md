@@ -44,6 +44,10 @@ of 1,024 commands, 8.0M ops/s with `fsync` and 275K ops/s with `F_FULLFSYNC`
 (full SSD flush; about 760x faster than syncing each command). Recovering a
 65K-order snapshot plus a 10K-command log takes 12 ms.
 
+Network ([details](bench/RESULTS.md#network-v3)): a durable order round trip
+over localhost TCP takes 19 µs (p50) without sync and 35 µs with `fsync`; four
+pipelining clients reach 4.5M durable orders/s.
+
 ## Testing
 
 - A shared behavior suite runs on both books, with invariants checked after
