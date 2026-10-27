@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   test:
-    name: ${{ matrix.compiler }} sanitize=${{ matrix.sanitize }}
+    name: ${{ matrix.compiler }} sanitize=${{ matrix.sanitize }}${{ matrix.tsan == 'ON' && ' tsan' || '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -18,6 +18,14 @@ jobs:
       matrix:
         compiler: [g++, clang++]
         sanitize: [OFF, ON]
+        tsan: [OFF]
+        tests: ['.']
+        include:
+          # ThreadSanitizer on the multithreaded code only.
+          - compiler: clang++
+            sanitize: OFF
+            tsan: ON
+            tests: 'Spsc|Gateway|Server|EndToEnd'
     steps:
       - uses: actions/checkout@v4
 
@@ -27,6 +35,7 @@ jobs:
           -DCMAKE_BUILD_TYPE=Debug
           -DCMAKE_CXX_COMPILER=${{ matrix.compiler }}
           -DHARBOR_SANITIZE=${{ matrix.sanitize }}
+          -DHARBOR_TSAN=${{ matrix.tsan }}
 
       - name: Build
         run: cmake --build build -j
@@ -35,12 +44,12 @@ jobs:
         shell: bash
         run: |
           set +e
-          ctest --test-dir build --output-on-failure > ctest.log 2>&1
+          ctest --test-dir build --output-on-failure -R '${{ matrix.tests }}' > ctest.log 2>&1
           status=$?
           cat ctest.log
           if [ "$status" -ne 0 ]; then
             # Surface the failure as an annotation so it is readable without opening the log.
-            summary=$(grep -E '\*\*\*Failed|Failure|runtime error|AddressSanitizer|LeakSanitizer|SUMMARY|what\(\)|Which is|Expected|trial|seed=' ctest.log \
+            summary=$(grep -E '\*\*\*Failed|Failure|runtime error|AddressSanitizer|LeakSanitizer|ThreadSanitizer|SUMMARY|what\(\)|Which is|Expected|trial|seed=' ctest.log \
               | head -40 | sed -e 's/%/%25/g' | sed ':a;N;$!ba;s/\n/%0A/g')
             echo "::error title=ctest failures::${summary}"
           fi

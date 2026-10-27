@@ -7,6 +7,12 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 option(HARBOR_SANITIZE "Build with AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
+option(HARBOR_TSAN "Build with ThreadSanitizer" OFF)
+if(HARBOR_SANITIZE AND HARBOR_TSAN)
+    message(FATAL_ERROR "HARBOR_SANITIZE and HARBOR_TSAN cannot be combined")
+endif()
+
+find_package(Threads REQUIRED)
 
 include(FetchContent)
 FetchContent_Declare(
@@ -28,6 +34,13 @@ function(harbor_configure_target target)
             -fno-sanitize-recover=all -fno-omit-frame-pointer)
         target_link_options(${target} PRIVATE -fsanitize=address,undefined -fno-sanitize-recover=all)
     endif()
+    if(HARBOR_TSAN)
+        target_compile_options(${target} PRIVATE -fsanitize=thread -fno-omit-frame-pointer)
+        target_link_options(${target} PRIVATE -fsanitize=thread)
+    endif()
+    if(HARBOR_SANITIZE OR HARBOR_TSAN)
+        target_compile_definitions(${target} PRIVATE HARBOR_SANITIZED)
+    endif()
 endfunction()
 
 add_library(harbor STATIC
@@ -40,6 +53,7 @@ add_library(harbor STATIC
     src/snapshot.cpp
 )
 target_include_directories(harbor PUBLIC include)
+target_link_libraries(harbor PUBLIC Threads::Threads)
 harbor_configure_target(harbor)
 
 enable_testing()
@@ -55,6 +69,7 @@ add_executable(harbor_tests
     tests/test_engine.cpp
     tests/test_recovery.cpp
     tests/test_crash.cpp
+    tests/test_spsc_ring.cpp
 )
 target_link_libraries(harbor_tests PRIVATE harbor GTest::gtest_main)
 harbor_configure_target(harbor_tests)
