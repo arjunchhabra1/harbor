@@ -54,7 +54,8 @@ TEST(EndToEnd, ManyClientsTrade) {
                 } else {
                     Side side = rng() % 2 ? Side::Buy : Side::Sell;
                     Price price = 150 + static_cast<Price>(rng() % 11) - 5;
-                    c.send(NewOrderMsg{i, side, rng() % 4 ? TimeInForce::GTC : TimeInForce::IOC, price, 1 + rng() % 10});
+                    c.send(NewOrderMsg{i, side, rng() % 4 ? TimeInForce::GTC : TimeInForce::IOC, price,
+                                       static_cast<Quantity>(1 + rng() % 10)});
                 }
             }
             std::vector<std::uint8_t> payload;
@@ -162,7 +163,8 @@ TEST(EndToEnd, ListenerMatchesEngineOverUdp) {
             std::mt19937 rng(static_cast<unsigned>(100 + k));
             for (std::uint32_t i = 0; i < 2'000; ++i) {
                 Side side = rng() % 2 ? Side::Buy : Side::Sell;
-                c.send(NewOrderMsg{i, side, TimeInForce::GTC, 150 + static_cast<Price>(rng() % 21) - 10, 1 + rng() % 5});
+                c.send(NewOrderMsg{i, side, TimeInForce::GTC, 150 + static_cast<Price>(rng() % 21) - 10,
+                                   static_cast<Quantity>(1 + rng() % 5)});
             }
             std::vector<std::uint8_t> payload;
             std::uint32_t responses = 0;
