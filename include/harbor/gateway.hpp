@@ -35,6 +35,9 @@ public:
     Gateway(const GatewayOptions& options, InboundRing& inbound, OutboundRing& outbound, Seqs seqs);
 
     void runOnce(int timeoutMs);
+    // Any thread: asks the gateway to send the engine a Stop item (the gateway
+    // is the inbound ring's only producer, so it must be the one to push it).
+    void requestStop() { stopRequested_.store(true, std::memory_order_release); }
 
     std::uint16_t orderPort() const { return orderPort_; }
     std::uint16_t snapshotPort() const { return snapshotPort_; }
@@ -90,6 +93,8 @@ private:
     std::vector<PollEvent> events_;
     std::vector<std::uint8_t> readBuf_;
     std::atomic<std::size_t> sessionCount_{0};
+    std::atomic<bool> stopRequested_{false};
+    bool stopSent_ = false;
 };
 
 }  // namespace harbor

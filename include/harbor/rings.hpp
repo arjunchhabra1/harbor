@@ -12,8 +12,8 @@ namespace harbor {
 struct InboundItem {
     enum class Kind : std::uint8_t { Command, Snapshot, Stop };
     Kind kind;
-    Command cmd;              // Command
-    std::uint64_t requestId;  // Snapshot: identifies the requesting connection
+    Command cmd;           // Command
+    std::uint64_t origin;  // the gateway session that sent it (Command) or asked (Snapshot)
 };
 
 // Engine thread -> network thread. Everything here came from Engine::drain(),
@@ -21,8 +21,8 @@ struct InboundItem {
 struct OutboundItem {
     enum class Kind : std::uint8_t { Response, Execution, Feed, SnapshotHeader, SnapshotOrder, SnapshotEnd };
     Kind kind;
-    ClientId client;          // Response, Execution: whose session receives it
-    std::uint64_t requestId;  // Snapshot*: which connection asked
+    ClientId client;       // Execution: the order owner, delivered to their current session
+    std::uint64_t origin;  // Response, Snapshot*: the exact session that sent the command or request
     wire::ResponseMsg response;
     wire::ExecutionMsg execution;
     wire::FeedEvent event;

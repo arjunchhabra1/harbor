@@ -29,14 +29,15 @@ struct CommandContext {
     Command cmd;
     std::optional<RestingOrder> before;  // the target order before the command (cancel/replace)
     Quantity restingAfter;               // the target order's quantity in the book right after it
+    std::uint64_t origin;                // opaque tag passed back with the response (gateway session)
 };
 
 // Turns released engine outputs into feed events, client responses, and
 // execution reports. Assigns feed seqs and match ids; both start at 1.
 class FeedGenerator {
 public:
-    // emitEvent(const wire::FeedEvent&), emitResponse(const wire::ResponseMsg&, ClientId),
-    // emitExecution(const wire::ExecutionMsg&, ClientId).
+    // emitEvent(const wire::FeedEvent&), emitResponse(const wire::ResponseMsg&, ClientId, origin),
+    // emitExecution(const wire::ExecutionMsg&, ClientId owner).
     template <class Events, class Responses, class Executions>
     void onOutput(const CommandContext& ctx, const Output& out, Events&& emitEvent, Responses&& emitResponse,
                   Executions&& emitExecution) {
@@ -47,7 +48,8 @@ public:
         std::uint8_t command = cmd.kind == Command::Kind::Add      ? 2
                                : cmd.kind == Command::Kind::Cancel ? 3
                                                                    : 4;
-        emitResponse(wire::ResponseMsg{clientOrderIdOf(id), command, out.result, out.seq, ctx.restingAfter}, client);
+        emitResponse(wire::ResponseMsg{clientOrderIdOf(id), command, out.result, out.seq, ctx.restingAfter}, client,
+                     ctx.origin);
         if (out.result != Reject::None) {
             return;  // rejected commands change nothing, so the feed says nothing
         }
@@ -108,7 +110,8 @@ public:
 
     FeedEngine(const BookConfig& cfg, const EngineOptions& options);
 
-    std::uint64_t submit(const Command& cmd, Clock::time_point now);
+    // origin is returned with the command's response (the gateway passes its session token).
+    std::uint64_t submit(const Command& cmd, Clock::time_point now, std::uint64_t origin = 0);
     void poll(Clock::time_point now) { engine_.poll(now); }
     void commit() { engine_.commit(); }
 

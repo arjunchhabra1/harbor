@@ -7,7 +7,7 @@ namespace harbor {
 FeedEngine::FeedEngine(const BookConfig& cfg, const EngineOptions& options)
     : engine_(cfg, options), contexts_(std::bit_ceil(std::size_t{options.maxBatch} * 2)) {}
 
-std::uint64_t FeedEngine::submit(const Command& cmd, Clock::time_point now) {
+std::uint64_t FeedEngine::submit(const Command& cmd, Clock::time_point now, std::uint64_t origin) {
     OrderId id = targetOf(cmd);
     std::optional<RestingOrder> before;
     if (cmd.kind != Command::Kind::Add) {
@@ -15,7 +15,7 @@ std::uint64_t FeedEngine::submit(const Command& cmd, Clock::time_point now) {
     }
     // Record the context before submitting: submit may commit, but outputs are
     // only consumed by drain(), which runs after this returns.
-    pushContext(CommandContext{cmd, before, 0});
+    pushContext(CommandContext{cmd, before, 0, origin});
     std::size_t slot = (head_ + count_ - 1) & (contexts_.size() - 1);
     std::uint64_t seq = engine_.submit(cmd, now);
     auto after = engine_.book().find(id);

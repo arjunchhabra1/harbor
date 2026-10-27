@@ -31,6 +31,11 @@ Gateway::Gateway(const GatewayOptions& options, InboundRing& inbound, OutboundRi
 }
 
 void Gateway::runOnce(int timeoutMs) {
+    if (!stopSent_ && stopRequested_.load(std::memory_order_acquire)) {
+        InboundItem stop{};
+        stop.kind = InboundItem::Kind::Stop;
+        stopSent_ = inbound_.tryPush(stop);
+    }
     routeOutbound();
     // Retry pushes that did not fit. Collect first: processing a frame can close
     // (and erase) its session.
@@ -174,7 +179,7 @@ void Gateway::handleFrame(Session& s, const wire::Frame& f) {
         s.snapshotAsked = true;
         InboundItem item{};
         item.kind = InboundItem::Kind::Snapshot;
-        item.requestId = s.token;
+        item.origin = s.token;
         pushOrBlock(s, item);
         return;
     }
@@ -202,6 +207,7 @@ void Gateway::handleFrame(Session& s, const wire::Frame& f) {
     }
     InboundItem item{};
     item.kind = InboundItem::Kind::Command;
+    item.origin = s.token;
     switch (f.type) {
         case MsgType::NewOrder: {
             wire::NewOrderMsg m{};
@@ -265,9 +271,18 @@ void Gateway::route(const OutboundItem& item) {
     switch (item.kind) {
         case Kind::Response:
         case Kind::Execution: {
-            Session* s = sessionFor(item.client);
+            // A response goes only to the session that sent the command; if it has
+            // closed, a later session of the same client must not receive it. An
+            // execution belongs to the order's owner, wherever they are connected now.
+            Session* s = nullptr;
+            if (item.kind == Kind::Response) {
+                auto it = sessions_.find(item.origin);
+                s = it == sessions_.end() ? nullptr : &it->second;
+            } else {
+                s = sessionFor(item.client);
+            }
             if (s == nullptr || s->closing) {
-                return;  // client not connected: nothing to deliver to
+                return;  // not connected: nothing to deliver to
             }
             if (item.kind == Kind::Response) {
                 send(*s, item.response);
@@ -275,7 +290,14 @@ void Gateway::route(const OutboundItem& item) {
                 send(*s, item.execution);
             }
             if (s->out.size() - s->outPos > opts_.sendBufferLimit) {
-                close(s->token);  // a client that does not read must not stall everyone else
+                // Over the limit: give the socket a chance first, so a burst to a
+                // client that is reading is not mistaken for a stalled one.
+                std::uint64_t token = s->token;
+                flush(*s);
+                auto it = sessions_.find(token);
+                if (it != sessions_.end() && it->second.out.size() - it->second.outPos > opts_.sendBufferLimit) {
+                    close(token);  // a client that does not read must not stall everyone else
+                }
             }
             return;
         }
@@ -285,7 +307,7 @@ void Gateway::route(const OutboundItem& item) {
         case Kind::SnapshotHeader:
         case Kind::SnapshotOrder:
         case Kind::SnapshotEnd: {
-            auto it = sessions_.find(item.requestId);
+            auto it = sessions_.find(item.origin);
             if (it == sessions_.end()) {
                 return;  // the requester hung up
             }

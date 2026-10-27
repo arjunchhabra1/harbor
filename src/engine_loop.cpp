@@ -33,10 +33,11 @@ void EngineLoop::drainAll() {
             item.event = e;
             push(item);
         },
-        [&](const wire::ResponseMsg& r, ClientId client) {
+        [&](const wire::ResponseMsg& r, ClientId client, std::uint64_t origin) {
             OutboundItem item{};
             item.kind = OutboundItem::Kind::Response;
             item.client = client;
+            item.origin = origin;
             item.response = r;
             push(item);
         },
@@ -58,19 +59,19 @@ void EngineLoop::serveSnapshot(std::uint64_t requestId) {
     drainAll();
     OutboundItem item{};
     item.kind = OutboundItem::Kind::SnapshotHeader;
-    item.requestId = requestId;
+    item.origin = requestId;
     item.snapHeader = wire::SnapshotHeaderMsg{fe_.lastFeedSeq(), static_cast<std::uint32_t>(fe_.book().orderCount())};
     push(item);
     fe_.book().forEachResting([&](OrderId id, ClientId, Side side, Price price, Quantity qty) {
         OutboundItem order{};
         order.kind = OutboundItem::Kind::SnapshotOrder;
-        order.requestId = requestId;
+        order.origin = requestId;
         order.snapOrder = wire::SnapshotOrderMsg{id, side, price, qty};
         push(order);
     });
     OutboundItem end{};
     end.kind = OutboundItem::Kind::SnapshotEnd;
-    end.requestId = requestId;
+    end.origin = requestId;
     push(end);
 }
 
@@ -81,10 +82,10 @@ bool EngineLoop::runOnce(Clock::time_point now) {
         busy_ = true;
         switch (item.kind) {
             case InboundItem::Kind::Command:
-                fe_.submit(item.cmd, now);
+                fe_.submit(item.cmd, now, item.origin);
                 break;
             case InboundItem::Kind::Snapshot:
-                serveSnapshot(item.requestId);
+                serveSnapshot(item.origin);
                 break;
             case InboundItem::Kind::Stop:
                 fe_.commit();

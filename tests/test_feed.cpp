@@ -54,7 +54,7 @@ protected:
         }
         fe->commit();
         fe->drain([&](const FeedEvent& e) { events.push_back(e); },
-                  [&](const ResponseMsg& r, ClientId c) { responses.emplace_back(c, r); },
+                  [&](const ResponseMsg& r, ClientId c, std::uint64_t) { responses.emplace_back(c, r); },
                   [&](const ExecutionMsg& x, ClientId c) { executions.emplace_back(c, x); });
     }
 };
@@ -177,7 +177,7 @@ TEST(FeedEquivalence, MillionCommands) {
         if (fe.lastDurableSeq() != lastDurable) {  // a batch just committed
             lastDurable = fe.lastDurableSeq();
             fe.drain([&](const FeedEvent& e) { consistent = consistent && feed.apply(e); },
-                     [](const ResponseMsg&, ClientId) {}, [](const ExecutionMsg&, ClientId) {});
+                     [](const ResponseMsg&, ClientId, std::uint64_t) {}, [](const ExecutionMsg&, ClientId) {});
             ASSERT_TRUE(consistent) << "feed event rejected after command " << i;
             ++commits;
             if (fe.pendingCount() == 0) {  // the book holds nothing undurable: compare exactly

@@ -20,6 +20,9 @@ A low-latency exchange matching engine in C++20.
 - **Engine**: logs every command, matches it immediately, and releases its
   result only after its group commit is synced. Snapshots rotate log segments;
   recovery restores the newest snapshot and replays its segment.
+- **Server**: a network thread (kqueue/epoll gateway) and an engine thread
+  connected by lock-free SPSC rings. Clients get a response only once their
+  command is durable; fills are reported to both parties.
 - **ReferenceBook**: `std::map` + `std::list`, kept simple as a correctness oracle.
 - Matching: best price first, then time; trades at the resting price; replace
   keeps queue position only when reducing quantity at the same price.

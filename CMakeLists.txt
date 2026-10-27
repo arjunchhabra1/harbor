@@ -57,6 +57,7 @@ add_library(harbor STATIC
     src/poller.cpp
     src/engine_loop.cpp
     src/gateway.cpp
+    src/server.cpp
 )
 target_include_directories(harbor PUBLIC include)
 target_link_libraries(harbor PUBLIC Threads::Threads)
@@ -79,6 +80,7 @@ add_executable(harbor_tests
     tests/test_protocol.cpp
     tests/test_feed.cpp
     tests/test_gateway.cpp
+    tests/test_end_to_end.cpp
 )
 target_link_libraries(harbor_tests PRIVATE harbor GTest::gtest_main)
 harbor_configure_target(harbor_tests)

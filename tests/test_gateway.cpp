@@ -127,3 +127,112 @@ TEST_F(GatewayTest, CancelTargetsOwnOrdersOnly) {
     ASSERT_TRUE(one->expect(MsgType::Response, r));
     EXPECT_EQ(r.result, Reject::None);  // client 1's order was still resting
 }
+
+// ---- Two-thread server ----
+
+#include "harbor/server.hpp"
+
+namespace {
+
+class ServerTest : public ::testing::Test {
+protected:
+    harbor::testing::TempDir dir;
+    std::unique_ptr<Server> server;
+
+    void start(std::size_t sendBufferLimit = std::size_t{1} << 20, BookConfig cfg = BookConfig{100, 200, 1, 65'536}) {
+        ServerOptions o;
+        o.book = cfg;
+        o.engine.dir = dir.path();
+        o.engine.maxBatch = 1'024;
+        o.engine.maxDelay = 200us;
+        o.engine.sync = SyncMode::None;
+        o.gateway.sendBufferLimit = sendBufferLimit;
+        server = std::make_unique<Server>(o);
+        server->start();
+    }
+
+    void TearDown() override {
+        if (server) {
+            server->stop();
+        }
+    }
+
+    std::unique_ptr<TestClient> login(ClientId id) {
+        // A just-closed session for the same client may not be gone yet: retry briefly.
+        for (int attempt = 0; attempt < 100; ++attempt) {
+            auto c = std::make_unique<TestClient>(server->orderPort());
+            c->send(Login{id});
+            std::vector<std::uint8_t> payload;
+            auto type = c->nextType(payload);
+            if (type == MsgType::LoginAccepted) {
+                return c;
+            }
+            std::this_thread::sleep_for(20ms);
+        }
+        ADD_FAILURE() << "login " << id << " never accepted";
+        return nullptr;
+    }
+};
+
+}  // namespace
+
+TEST_F(ServerTest, ExecutionsReachBothParties) {
+    start();
+    auto seller = login(1);
+    auto buyer = login(2);
+    seller->send(NewOrderMsg{11, Side::Sell, TimeInForce::GTC, 150, 5});
+    ResponseMsg r{};
+    ASSERT_TRUE(seller->expect(MsgType::Response, r));
+    buyer->send(NewOrderMsg{22, Side::Buy, TimeInForce::GTC, 150, 5});
+    ASSERT_TRUE(buyer->expect(MsgType::Response, r));
+    EXPECT_EQ(r, (ResponseMsg{22, 2, Reject::None, 2, 0}));
+    ExecutionMsg mine{}, theirs{};
+    ASSERT_TRUE(buyer->expect(MsgType::Execution, mine));
+    ASSERT_TRUE(seller->expect(MsgType::Execution, theirs));
+    EXPECT_EQ(mine, (ExecutionMsg{22, 2, 150, 5, ExecutionMsg::Aggressor, 1}));
+    EXPECT_EQ(theirs, (ExecutionMsg{11, 2, 150, 5, ExecutionMsg::Resting, 1}));
+}
+
+TEST_F(ServerTest, ResponsesForDisconnectedClientAreDropped) {
+    start();
+    {
+        auto c = login(1);
+        for (std::uint32_t i = 0; i < 100; ++i) {
+            c->send(NewOrderMsg{i, Side::Buy, TimeInForce::GTC, 120, 1});
+        }
+    }  // closes with responses in flight
+    auto again = login(1);
+    again->send(NewOrderMsg{1'000, Side::Buy, TimeInForce::GTC, 121, 1});
+    ResponseMsg r{};
+    ASSERT_TRUE(again->expect(MsgType::Response, r));  // the first frame is for its own command
+    EXPECT_EQ(r.clientOrderId, 1'000u);
+    std::vector<std::uint8_t> payload;
+    EXPECT_FALSE(again->nextType(payload, 300).has_value());  // and nothing stale follows
+}
+
+TEST_F(ServerTest, SlowClientDisconnected) {
+    start(64 * 1024);
+    auto slow = login(1);
+    auto fast = login(2);
+    // 50,000 responses (over 1 MB) that the slow client never reads: more than
+    // the kernel's socket buffers plus the 64 KiB gateway limit.
+    constexpr std::uint32_t kOrders = 50'000;
+    for (std::uint32_t i = 0; i < kOrders; ++i) {
+        slow->send(NewOrderMsg{i, Side::Sell, TimeInForce::GTC, 150, 1});
+    }
+    for (int i = 0; i < 1'000 && server->sessionCount() != 1; ++i) {
+        std::this_thread::sleep_for(10ms);
+    }
+    EXPECT_EQ(server->sessionCount(), 1u);  // the slow reader was cut off
+    // The fast client is unaffected: it trades against what the slow one left resting.
+    fast->send(NewOrderMsg{1, Side::Buy, TimeInForce::IOC, 150, 1'000});
+    ResponseMsg r{};
+    ASSERT_TRUE(fast->expect(MsgType::Response, r, 10'000));
+    EXPECT_EQ(r.result, Reject::None);
+    std::uint32_t filled = 0;
+    ExecutionMsg x{};
+    while (filled < 1'000 && fast->expect(MsgType::Execution, x, 2'000)) {
+        filled += x.qty;
+    }
+    EXPECT_EQ(filled, 1'000u);  // resting orders outlive their owner's session
+}
