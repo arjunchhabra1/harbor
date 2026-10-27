@@ -60,6 +60,8 @@ private:
         bool wantWrite = false;
         bool closing = false;   // close once `out` is flushed
         bool snapshotAsked = false;
+        bool readClosed = false;      // peer sent FIN: answer what it sent, then close
+        std::uint64_t inflight = 0;   // commands pushed to the engine, not yet answered
         std::optional<InboundItem> blocked;  // waiting for room in the inbound ring
     };
 
@@ -97,6 +99,7 @@ private:
     std::unordered_map<ClientId, std::uint64_t> byClient_;
     std::uint64_t nextToken_ = 16;
     std::vector<PollEvent> events_;
+    std::vector<std::uint64_t> tokens_;  // scratch for passes that may close sessions
     std::vector<std::uint8_t> readBuf_;
     std::atomic<std::size_t> sessionCount_{0};
     std::atomic<bool> stopRequested_{false};

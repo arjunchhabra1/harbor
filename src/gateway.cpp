@@ -99,17 +99,30 @@ void Gateway::runOnce(int timeoutMs) {
     }
     routeOutbound();
     flushFeed();
-    std::vector<std::uint64_t> done;
-    for (auto& [token, s] : sessions_) {
+    // flush() and close() can erase sessions, so walk a copy of the tokens.
+    tokens_.clear();
+    for (const auto& [token, s] : sessions_) {
+        tokens_.push_back(token);
+    }
+    for (std::uint64_t token : tokens_) {
+        auto it = sessions_.find(token);
+        if (it == sessions_.end()) {
+            continue;
+        }
+        Session& s = it->second;
+        if (s.readClosed && !s.blocked && s.inflight == 0 && !s.snapshot) {
+            s.closing = true;  // a half-closed client has been answered in full
+        }
         if (s.outPos < s.out.size()) {
             flush(s);
+            it = sessions_.find(token);
+            if (it == sessions_.end()) {
+                continue;
+            }
         }
-        if (s.closing && s.outPos >= s.out.size()) {
-            done.push_back(token);
+        if (it->second.closing && it->second.outPos >= it->second.out.size()) {
+            close(token);
         }
-    }
-    for (std::uint64_t token : done) {
-        close(token);
     }
 }
 
@@ -136,7 +149,7 @@ void Gateway::accept(int listenFd, bool snapshot) {
 }
 
 void Gateway::readFrom(Session& s) {
-    if (s.blocked || s.closing) {
+    if (s.blocked || s.closing || s.readClosed) {
         return;  // not reading until the inbound ring has room / the session is going away
     }
     std::uint64_t token = s.token;
@@ -146,13 +159,21 @@ void Gateway::readFrom(Session& s) {
             s.reader.feed(readBuf_.data(), static_cast<std::size_t>(n));
             continue;
         }
-        if (n == 0 || (errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR)) {
-            close(token);  // peer closed or socket error
-            return;
-        }
-        if (errno != EINTR) {
+        if (n == 0) {
+            // FIN: the client has finished sending, not necessarily reading.
+            // Handle everything it sent; close once it has all been answered.
+            s.readClosed = true;
+            updateInterest(s);
             break;
         }
+        if (errno == EINTR) {
+            continue;
+        }
+        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            break;
+        }
+        close(token);  // reset or other socket error
+        return;
     }
     processFrames(s);
 }
@@ -161,6 +182,9 @@ void Gateway::processFrames(Session& s) {
     if (s.blocked) {
         if (!inbound_.tryPush(*s.blocked)) {
             return;
+        }
+        if (s.blocked->kind == InboundItem::Kind::Command) {
+            ++s.inflight;
         }
         s.blocked.reset();
         updateInterest(s);
@@ -185,6 +209,9 @@ void Gateway::processFrames(Session& s) {
 
 bool Gateway::pushOrBlock(Session& s, const InboundItem& item) {
     if (inbound_.tryPush(item)) {
+        if (item.kind == InboundItem::Kind::Command) {
+            ++s.inflight;
+        }
         return true;
     }
     s.blocked = item;  // TCP flow control now pushes back on this client
@@ -308,6 +335,9 @@ void Gateway::route(const OutboundItem& item) {
                 return;  // not connected: nothing to deliver to
             }
             if (item.kind == Kind::Response) {
+                if (s->inflight > 0) {
+                    --s->inflight;
+                }
                 send(*s, item.response);
             } else {
                 send(*s, item.execution);
@@ -398,7 +428,7 @@ void Gateway::flush(Session& s) {
 }
 
 void Gateway::updateInterest(Session& s) {
-    poller_.update(s.fd.get(), s.token, !s.blocked.has_value(), s.wantWrite);
+    poller_.update(s.fd.get(), s.token, !s.blocked.has_value() && !s.readClosed, s.wantWrite);
 }
 
 void Gateway::close(std::uint64_t token) {

@@ -243,3 +243,47 @@ TEST_F(ServerTest, SlowClientDisconnected) {
     }
     EXPECT_EQ(filled, 1'000u);  // resting orders outlive their owner's session
 }
+
+TEST_F(ServerTest, SurvivesResetsWithOutputPending) {
+    start();
+    std::vector<std::thread> clients;
+    for (ClientId k = 1; k <= 8; ++k) {
+        clients.emplace_back([&, k] {
+            TestClient c(server->orderPort());
+            c.send(Login{k});
+            for (std::uint32_t i = 0; i < 2'000; ++i) {
+                c.send(NewOrderMsg{i, Side::Buy, TimeInForce::GTC, 120, 1});
+            }
+            linger reset{1, 0};  // close with RST while responses are still being sent
+            ::setsockopt(c.fd(), SOL_SOCKET, SO_LINGER, &reset, sizeof reset);
+        });
+    }
+    for (auto& t : clients) {
+        t.join();
+    }
+    auto after = login(50);  // the server is still alive and serving
+    ASSERT_NE(after, nullptr);
+    after->send(NewOrderMsg{1, Side::Buy, TimeInForce::GTC, 121, 1});
+    ResponseMsg r{};
+    ASSERT_TRUE(after->expect(MsgType::Response, r));
+    EXPECT_EQ(r.result, Reject::None);
+}
+
+TEST_F(ServerTest, HalfClosedClientStillGetsResponses) {
+    start();
+    TestClient c(server->orderPort());
+    c.send(Login{7});
+    for (std::uint32_t i = 0; i < 10; ++i) {
+        c.send(NewOrderMsg{i, Side::Buy, TimeInForce::GTC, 120, 1});
+    }
+    ::shutdown(c.fd(), SHUT_WR);  // "that's all I'm sending" (FIN), still reading
+    LoginAccepted ok{};
+    ASSERT_TRUE(c.expect(MsgType::LoginAccepted, ok));
+    for (std::uint32_t i = 0; i < 10; ++i) {
+        ResponseMsg r{};
+        ASSERT_TRUE(c.expect(MsgType::Response, r)) << "response " << i;
+        EXPECT_EQ(r.clientOrderId, i);
+        EXPECT_EQ(r.result, Reject::None);
+    }
+    EXPECT_TRUE(c.closedWithin());  // then the server finishes the session
+}

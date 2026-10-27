@@ -90,7 +90,9 @@ Poller::~Poller() { ::close(fd_); }
 namespace {
 epoll_event makeEvent(std::uint64_t token, bool wantRead, bool wantWrite) {
     epoll_event ev{};
-    ev.events = (wantRead ? EPOLLIN : 0u) | (wantWrite ? EPOLLOUT : 0u) | EPOLLRDHUP;
+    // EPOLLRDHUP only while reading: it stays set after a FIN, so a half-closed
+    // session would otherwise wake the loop forever. EPOLLHUP/ERR always report.
+    ev.events = (wantRead ? EPOLLIN | EPOLLRDHUP : 0u) | (wantWrite ? EPOLLOUT : 0u);
     ev.data.u64 = token;
     return ev;
 }
