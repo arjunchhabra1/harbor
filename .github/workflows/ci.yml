@@ -38,7 +38,18 @@ jobs:
           -DHARBOR_TSAN=${{ matrix.tsan }}
 
       - name: Build
-        run: cmake --build build -j
+        shell: bash
+        run: |
+          set +e
+          cmake --build build -j > build.log 2>&1
+          status=$?
+          cat build.log
+          if [ "$status" -ne 0 ]; then
+            # Surface compiler errors as an annotation so they are readable without opening the log.
+            summary=$(grep -E 'error|Error' build.log | head -30 | sed -e 's/%/%25/g' | sed ':a;N;$!ba;s/\n/%0A/g')
+            echo "::error title=build failures::${summary}"
+          fi
+          exit $status
 
       - name: Test
         shell: bash
