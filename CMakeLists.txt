@@ -53,6 +53,10 @@ add_library(harbor STATIC
     src/snapshot.cpp
     src/protocol.cpp
     src/feed.cpp
+    src/net.cpp
+    src/poller.cpp
+    src/engine_loop.cpp
+    src/gateway.cpp
 )
 target_include_directories(harbor PUBLIC include)
 target_link_libraries(harbor PUBLIC Threads::Threads)
@@ -74,6 +78,7 @@ add_executable(harbor_tests
     tests/test_spsc_ring.cpp
     tests/test_protocol.cpp
     tests/test_feed.cpp
+    tests/test_gateway.cpp
 )
 target_link_libraries(harbor_tests PRIVATE harbor GTest::gtest_main)
 harbor_configure_target(harbor_tests)

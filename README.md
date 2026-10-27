@@ -9,7 +9,7 @@ A low-latency exchange matching engine in C++20.
 |---|---|---|
 | v1 | Price-time order book: limit, IOC, cancel, replace | Done |
 | v2 | Write-ahead log, snapshots, crash recovery | Done |
-| v3 | TCP order gateway, UDP market data | Planned |
+| v3 | TCP order gateway, UDP market data | In progress |
 | v4 | Hot standby with failover | Planned |
 
 ## Design
