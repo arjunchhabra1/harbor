@@ -2,6 +2,7 @@
 #include <atomic>
 #include <chrono>
 #include <memory>
+#include <sys/socket.h>
 #include <thread>
 #include "harbor/engine_loop.hpp"
 #include "harbor/gateway.hpp"
@@ -139,7 +140,8 @@ protected:
     harbor::testing::TempDir dir;
     std::unique_ptr<Server> server;
 
-    void start(std::size_t sendBufferLimit = std::size_t{1} << 20, BookConfig cfg = BookConfig{100, 200, 1, 65'536}) {
+    void start(std::size_t sendBufferLimit = std::size_t{1} << 20, int socketSendBuffer = 0,
+               BookConfig cfg = BookConfig{100, 200, 1, 65'536}) {
         ServerOptions o;
         o.book = cfg;
         o.engine.dir = dir.path();
@@ -147,6 +149,7 @@ protected:
         o.engine.maxDelay = 200us;
         o.engine.sync = SyncMode::None;
         o.gateway.sendBufferLimit = sendBufferLimit;
+        o.gateway.socketSendBuffer = socketSendBuffer;
         server = std::make_unique<Server>(o);
         server->start();
     }
@@ -211,11 +214,15 @@ TEST_F(ServerTest, ResponsesForDisconnectedClientAreDropped) {
 }
 
 TEST_F(ServerTest, SlowClientDisconnected) {
-    start(64 * 1024);
+    // Bound kernel buffering on both ends; otherwise Linux autotunes loopback
+    // buffers to several MB and absorbs everything the slow client ignores.
+    start(64 * 1024, 64 * 1024);
     auto slow = login(1);
+    int rcvbuf = 64 * 1024;
+    ::setsockopt(slow->fd(), SOL_SOCKET, SO_RCVBUF, &rcvbuf, sizeof rcvbuf);
     auto fast = login(2);
-    // 50,000 responses (over 1 MB) that the slow client never reads: more than
-    // the kernel's socket buffers plus the 64 KiB gateway limit.
+    // 50,000 responses (over 1 MB) that the slow client never reads: far more
+    // than the bounded socket buffers plus the 64 KiB gateway limit.
     constexpr std::uint32_t kOrders = 50'000;
     for (std::uint32_t i = 0; i < kOrders; ++i) {
         slow->send(NewOrderMsg{i, Side::Sell, TimeInForce::GTC, 150, 1});

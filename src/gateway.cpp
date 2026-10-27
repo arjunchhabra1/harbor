@@ -122,6 +122,9 @@ void Gateway::accept(int listenFd, bool snapshot) {
         setNonBlocking(fd);
         setNoDelay(fd);
         setNoSigPipe(fd);
+        if (opts_.socketSendBuffer > 0) {
+            ::setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &opts_.socketSendBuffer, sizeof opts_.socketSendBuffer);
+        }
         std::uint64_t token = nextToken_++;
         Session& s = sessions_[token];
         s.fd = Fd(fd);

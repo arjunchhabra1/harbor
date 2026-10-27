@@ -22,6 +22,7 @@ struct GatewayOptions {
     std::string feedHost = "127.0.0.1";
     std::uint16_t feedPort = 0;      // where feed packets are sent; 0 disables the feed
     std::size_t sendBufferLimit = std::size_t{1} << 20;  // per order session; overflow disconnects it
+    int socketSendBuffer = 0;  // SO_SNDBUF for sessions (0 = OS default); bounds what the kernel queues
     std::uint32_t feedSession = 1;
 };
 
