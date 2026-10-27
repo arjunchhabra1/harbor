@@ -9,15 +9,19 @@ constexpr int kMaxItemsPerPass = 4'096;
 }  // namespace
 
 EngineLoop::EngineLoop(const BookConfig& cfg, const EngineOptions& options, InboundRing& inbound,
-                       OutboundRing& outbound)
-    : fe_(cfg, options), inbound_(inbound), outbound_(outbound) {
+                       OutboundRing& outbound, Wakeup* wakeup)
+    : fe_(cfg, options), inbound_(inbound), outbound_(outbound), wakeup_(wakeup) {
     publishSeqs();
 }
 
 void EngineLoop::push(const OutboundItem& item) {
     while (!outbound_.tryPush(item)) {
+        if (wakeup_ != nullptr) {
+            wakeup_->notify();  // the ring is full: make sure the network thread is draining it
+        }
         std::this_thread::yield();
     }
+    pushed_ = true;
 }
 
 void EngineLoop::publishSeqs() {
@@ -49,6 +53,10 @@ void EngineLoop::drainAll() {
             push(item);
         });
     publishSeqs();
+    if (pushed_ && wakeup_ != nullptr) {
+        wakeup_->notify();
+    }
+    pushed_ = false;
 }
 
 // A snapshot must describe exactly the state the feed has announced: commit

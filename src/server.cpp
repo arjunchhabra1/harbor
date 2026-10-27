@@ -20,9 +20,9 @@ GatewayOptions withNewFeedSession(const ServerOptions& options) {
 Server::Server(const ServerOptions& options)
     : inbound_(std::make_unique<InboundRing>()),
       outbound_(std::make_unique<OutboundRing>()),
-      loop_(options.book, options.engine, *inbound_, *outbound_),
+      loop_(options.book, options.engine, *inbound_, *outbound_, &wakeup_),
       gateway_(withNewFeedSession(options), *inbound_, *outbound_,
-               [this] { return std::pair{loop_.lastDurableSeq(), loop_.lastFeedSeq()}; }) {}
+               [this] { return std::pair{loop_.lastDurableSeq(), loop_.lastFeedSeq()}; }, &wakeup_) {}
 
 Server::~Server() { stop(); }
 

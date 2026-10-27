@@ -9,20 +9,26 @@ namespace harbor {
 namespace {
 constexpr std::uint64_t kOrderListener = 1;
 constexpr std::uint64_t kSnapshotListener = 2;
+constexpr std::uint64_t kWakeup = 3;
 constexpr std::size_t kMaxOutboundPerPass = 65'536;
 }  // namespace
 
-Gateway::Gateway(const GatewayOptions& options, InboundRing& inbound, OutboundRing& outbound, Seqs seqs)
+Gateway::Gateway(const GatewayOptions& options, InboundRing& inbound, OutboundRing& outbound, Seqs seqs,
+                 Wakeup* wakeup)
     : opts_(options),
       inbound_(inbound),
       outbound_(outbound),
       seqs_(std::move(seqs)),
+      wakeup_(wakeup),
       packetizer_(options.feedSession),
       readBuf_(65'536) {
     orderListener_ = listenTcp(opts_.orderPort, orderPort_);
     snapshotListener_ = listenTcp(opts_.snapshotPort, snapshotPort_);
     poller_.add(orderListener_.get(), kOrderListener, true, false);
     poller_.add(snapshotListener_.get(), kSnapshotListener, true, false);
+    if (wakeup_ != nullptr) {
+        poller_.add(wakeup_->readFd(), kWakeup, true, false);
+    }
     if (opts_.feedPort != 0) {
         std::uint16_t unused = 0;
         feedSocket_ = openUdp(0, unused);
@@ -55,8 +61,22 @@ void Gateway::runOnce(int timeoutMs) {
     for (auto& [token, s] : sessions_) {
         pending = pending || s.blocked.has_value() || s.outPos < s.out.size();
     }
-    poller_.wait(events_, pending ? 0 : timeoutMs);
+    int timeout = pending ? 0 : timeoutMs;
+    if (wakeup_ != nullptr && timeout > 0) {
+        wakeup_->beginSleep();
+        if (outbound_.sizeApprox() > 0) {
+            timeout = 0;  // output arrived before we slept
+        }
+    }
+    poller_.wait(events_, timeout);
+    if (wakeup_ != nullptr) {
+        wakeup_->endSleep();
+    }
     for (const PollEvent& e : events_) {
+        if (e.token == kWakeup) {
+            wakeup_->drain();
+            continue;
+        }
         if (e.token == kOrderListener) {
             accept(orderListener_.get(), false);
             continue;

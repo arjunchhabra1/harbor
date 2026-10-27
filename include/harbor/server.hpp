@@ -6,6 +6,7 @@
 #include <thread>
 #include "harbor/engine_loop.hpp"
 #include "harbor/gateway.hpp"
+#include "harbor/wakeup.hpp"
 
 namespace harbor {
 
@@ -37,6 +38,7 @@ public:
 private:
     std::unique_ptr<InboundRing> inbound_;
     std::unique_ptr<OutboundRing> outbound_;
+    Wakeup wakeup_;
     EngineLoop loop_;
     Gateway gateway_;
     std::thread network_;

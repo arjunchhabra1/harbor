@@ -12,6 +12,7 @@
 #include "harbor/poller.hpp"
 #include "harbor/protocol.hpp"
 #include "harbor/rings.hpp"
+#include "harbor/wakeup.hpp"
 
 namespace harbor {
 
@@ -32,7 +33,10 @@ public:
     // seqs() returns {lastDurableSeq, lastFeedSeq} for LoginAccepted.
     using Seqs = std::function<std::pair<std::uint64_t, std::uint64_t>()>;
 
-    Gateway(const GatewayOptions& options, InboundRing& inbound, OutboundRing& outbound, Seqs seqs);
+    // wakeup (optional) lets the engine thread end a Poller::wait early when it
+    // pushes output; without it, output waits for the next poll timeout.
+    Gateway(const GatewayOptions& options, InboundRing& inbound, OutboundRing& outbound, Seqs seqs,
+            Wakeup* wakeup = nullptr);
 
     void runOnce(int timeoutMs);
     // Any thread: asks the gateway to send the engine a Stop item (the gateway
@@ -78,6 +82,7 @@ private:
     InboundRing& inbound_;
     OutboundRing& outbound_;
     Seqs seqs_;
+    Wakeup* wakeup_;
     Poller poller_;
     Fd orderListener_;
     Fd snapshotListener_;

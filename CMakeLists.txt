@@ -59,6 +59,7 @@ add_library(harbor STATIC
     src/gateway.cpp
     src/server.cpp
     src/feed_listener.cpp
+    src/wakeup.cpp
 )
 target_include_directories(harbor PUBLIC include)
 target_link_libraries(harbor PUBLIC Threads::Threads)

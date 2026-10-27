@@ -4,6 +4,7 @@
 #include <cstdint>
 #include "harbor/feed.hpp"
 #include "harbor/rings.hpp"
+#include "harbor/wakeup.hpp"
 
 namespace harbor {
 
@@ -14,7 +15,10 @@ class EngineLoop {
 public:
     using Clock = FeedEngine::Clock;
 
-    EngineLoop(const BookConfig& cfg, const EngineOptions& options, InboundRing& inbound, OutboundRing& outbound);
+    // wakeup (optional) is notified whenever output is pushed, so a sleeping
+    // network thread wakes immediately.
+    EngineLoop(const BookConfig& cfg, const EngineOptions& options, InboundRing& inbound, OutboundRing& outbound,
+               Wakeup* wakeup = nullptr);
 
     // One pass: up to a bounded number of inbound items, then poll and drain.
     // Returns false once a Stop item has been processed.
@@ -35,6 +39,8 @@ private:
     FeedEngine fe_;
     InboundRing& inbound_;
     OutboundRing& outbound_;
+    Wakeup* wakeup_;
+    bool pushed_ = false;  // output pushed since the last notify
     bool busy_ = false;
     std::atomic<std::uint64_t> durableSeq_{0};
     std::atomic<std::uint64_t> feedSeq_{0};
